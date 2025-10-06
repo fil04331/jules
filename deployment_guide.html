@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="fr" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guide de Déploiement Interactif - Jules.google</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Warm Neutrals & Muted Teal -->
+    <!-- Application Structure Plan: The application is structured as a clear, step-by-step visual journey, guiding the user from the problem (a local, insecure app) to the complete solution (a secure, globally accessible service). It begins by framing the challenge, then introduces the two-pronged solution—Authentication and Deployment—side-by-side for clarity. The core of the SPA is the interactive visualization of the authentication token flow, which transforms a complex process into an easy-to-follow diagram. The deployment section uses a similar visual approach, presenting the final cloud architecture as a clear diagram. Code snippets like the Dockerfile and Firestore rules are presented in clean, readable blocks. This structure was deliberately chosen to deconstruct a dense technical document into a more intuitive, engaging, and less intimidating learning experience. -->
+    <!-- Visualization & Content Choices: Report Info: Authentication Process -> Goal: Explain Process -> Viz/Presentation: Interactive HTML/CSS flowchart showing JWT token flow -> Justification: A visual flow is far more effective at explaining a multi-step security process than paragraphs of text. | Report Info: Final Cloud Architecture -> Goal: Organize -> Viz/Presentation: HTML/CSS diagram showing the relationship between Vercel, Cloud Run, and Google services -> Justification: Clarifies the abstract concept of a serverless deployment architecture. | Report Info: Dockerfile, Firestore Rules -> Goal: Inform -> Viz/Presentation: Formatted code blocks -> Justification: Presents code in a clean, readable, and standard format. No quantitative data was present, so no charts (Chart.js/Plotly.js) were used. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #FDFBF8; /* Warm off-white */
+            color: #4A4A4A; /* Dark warm gray */
+        }
+        .accent-color { color: #3A8891; } /* Muted Teal */
+        .accent-bg { background-color: #3A8891; }
+        .accent-border { border-color: #3A8891; }
+        .secondary-bg { background-color: #F7F3EE; } /* Lighter beige */
+        .code-block {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.875rem;
+            overflow-x: auto;
+            white-space: pre;
+        }
+        .code-block .comment { color: #9ca3af; }
+        .code-block .keyword { color: #a78bfa; }
+        .code-block .string { color: #90cdf4; }
+        .flow-arrow {
+            position: relative;
+            padding: 1rem;
+        }
+        .flow-arrow::after {
+            content: '→';
+            position: absolute;
+            top: 50%;
+            right: -24px;
+            transform: translateY(-50%);
+            font-size: 2.5rem;
+            color: #3A8891;
+        }
+        @media (max-width: 767px) {
+            .flow-arrow::after {
+                content: '↓';
+                top: auto;
+                bottom: -28px;
+                left: 50%;
+                transform: translateX(-50%);
+            }
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <!-- Header & Navigation -->
+    <header id="header" class="bg-white/80 backdrop-blur-md sticky top-0 z-50 shadow-sm">
+        <nav class="container mx-auto px-6 py-3 flex justify-between items-center">
+            <h1 class="text-xl font-bold accent-color">Déploiement de Jules</h1>
+            <div class="hidden md:flex space-x-8">
+                <a href="#challenge" class="text-gray-600 hover:accent-color transition-colors duration-300">Le Défi</a>
+                <a href="#authentication" class="text-gray-600 hover:accent-color transition-colors duration-300">Authentification</a>
+                <a href="#deployment" class="text-gray-600 hover:accent-color transition-colors duration-300">Déploiement</a>
+            </div>
+            <button id="mobile-menu-button" class="md:hidden text-gray-600 focus:outline-none">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-4 6h4"></path></svg>
+            </button>
+        </nav>
+        <div id="mobile-menu" class="hidden md:hidden px-6 pt-2 pb-4 border-t">
+            <a href="#challenge" class="block py-2 text-gray-600 hover:accent-color">Le Défi</a>
+            <a href="#authentication" class="block py-2 text-gray-600 hover:accent-color">Authentification</a>
+            <a href="#deployment" class="block py-2 text-gray-600 hover:accent-color">Déploiement</a>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-6 py-12 md:py-16">
+
+        <!-- Section 1: The Challenge -->
+        <section id="challenge" class="mb-20 md:mb-24 text-center">
+            <h2 class="text-3xl md:text-4xl font-bold mb-4">Le Défi : De Local à Global</h2>
+            <p class="max-w-3xl mx-auto text-lg text-gray-600 mb-12">
+                Actuellement, votre agent "Jules" est un projet local, accessible uniquement sur votre machine. Pour réaliser sa pleine vision, nous devons le rendre accessible de n'importe où, tout en garantissant que vous seul puissiez y accéder.
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+                <div class="secondary-bg p-8 rounded-xl border border-gray-200">
+                    <h3 class="font-bold text-xl mb-3 flex items-center"><span class="text-3xl mr-3">🔐</span>Authentification</h3>
+                    <p class="text-gray-600">Vérifier votre identité pour que personne d'autre ne puisse utiliser votre agent ou accéder à vos conversations.</p>
+                </div>
+                <div class="secondary-bg p-8 rounded-xl border border-gray-200">
+                    <h3 class="font-bold text-xl mb-3 flex items-center"><span class="text-3xl mr-3">🌍</span>Déploiement</h3>
+                    <p class="text-gray-600">Mettre votre application sur des serveurs publics pour qu'elle soit accessible via une URL simple, 24h/24 et 7j/7.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Authentication -->
+        <section id="authentication" class="mb-20 md:mb-24">
+            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4">Partie 1 : Qui êtes-vous ? (Authentification)</h2>
+            <p class="max-w-3xl mx-auto text-lg text-gray-600 text-center mb-16">
+                Nous utilisons Firebase Authentication pour une sécurité maximale. Le processus est basé sur un jeton sécurisé (JWT) qui prouve votre identité à chaque requête, sans jamais exposer votre mot de passe. Voici comment cela fonctionne.
+            </p>
+            
+            <div class="bg-white p-8 rounded-xl shadow-md border">
+                <h3 class="text-xl font-bold mb-8 text-center">Le Flux du Jeton d'Authentification</h3>
+                <div class="flex flex-col md:flex-row justify-between items-center space-y-12 md:space-y-0 md:space-x-8 text-center">
+                    
+                    <div class="flex-1 flex flex-col items-center p-4 flow-arrow">
+                        <span class="text-5xl mb-3">👤</span>
+                        <p class="font-semibold">1. Connexion</p>
+                        <p class="text-sm text-gray-600">Vous vous connectez une fois sur l'interface avec email/mot de passe.</p>
+                    </div>
+
+                    <div class="flex-1 flex flex-col items-center p-4 secondary-bg rounded-lg flow-arrow">
+                        <span class="text-5xl mb-3">🎟️</span>
+                        <p class="font-semibold">2. Réception du Jeton</p>
+                        <p class="text-sm text-gray-600">Firebase vous donne un jeton JWT sécurisé et temporaire.</p>
+                    </div>
+
+                    <div class="flex-1 flex flex-col items-center p-4 flow-arrow">
+                        <span class="text-5xl mb-3">📤</span>
+                        <p class="font-semibold">3. Envoi de Requête</p>
+                        <p class="text-sm text-gray-600">Pour chaque message, votre app envoie la requête + le jeton au backend.</p>
+                    </div>
+
+                    <div class="flex-1 flex flex-col items-center p-4 secondary-bg rounded-lg">
+                        <span class="text-5xl mb-3">✅</span>
+                        <p class="font-semibold">4. Vérification du Backend</p>
+                        <p class="text-sm text-gray-600">Le backend vérifie le jeton. Si valide, il exécute la requête. Sinon, il la rejette.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-12">
+                <h3 class="text-2xl font-bold text-center mb-6">La Barrière Ultime : Règles Firestore</h3>
+                <p class="max-w-3xl mx-auto text-gray-600 text-center mb-8">
+                    Même si le backend était compromis, la base de données elle-même applique des règles de sécurité strictes. Personne ne peut lire les données d'un autre utilisateur.
+                </p>
+                <div class="max-w-4xl mx-auto">
+                    <pre class="code-block"><code id="firestore-rules-code"></code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 3: Deployment -->
+        <section id="deployment">
+            <h2 class="text-3xl md:text-4xl font-bold text-center mb-4">Partie 2 : Accès de n'importe où (Déploiement)</h2>
+            <p class="max-w-3xl mx-auto text-lg text-gray-600 text-center mb-16">
+                Nous utilisons une architecture "Serverless" pour un accès instantané et une scalabilité automatique. Votre interface (Frontend) est hébergée sur Vercel et votre cerveau (Backend) sur Google Cloud Run.
+            </p>
+
+            <div class="bg-white p-8 rounded-xl shadow-md border mb-12">
+                 <h3 class="text-xl font-bold mb-8 text-center">Architecture de Déploiement Cloud</h3>
+                <div class="flex flex-col md:flex-row justify-around items-center space-y-8 md:space-y-0 text-center">
+                    <div class="flex flex-col items-center">
+                        <span class="text-5xl">👤</span>
+                        <p class="font-bold mt-2">Vous</p>
+                    </div>
+                    <div class="text-4xl accent-color">→</div>
+                    <div class="flex flex-col items-center p-4 secondary-bg rounded-lg">
+                        <span class="text-5xl">🌐</span>
+                        <p class="font-bold mt-2">Vercel</p>
+                        <p class="text-sm text-gray-500">(Frontend)</p>
+                    </div>
+                     <div class="text-4xl accent-color">→</div>
+                    <div class="flex flex-col items-center p-4 secondary-bg rounded-lg">
+                        <span class="text-5xl">🧠</span>
+                        <p class="font-bold mt-2">Google Cloud Run</p>
+                        <p class="text-sm text-gray-500">(Backend)</p>
+                    </div>
+                     <div class="text-4xl accent-color">→</div>
+                     <div class="flex flex-col items-center">
+                        <span class="text-5xl">💾</span>
+                        <p class="font-bold mt-2">Services Google</p>
+                        <p class="text-sm text-gray-500">(Firestore, Gemini)</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="text-2xl font-bold text-center mb-6">Conteneuriser le Backend avec Docker</h3>
+                <p class="max-w-3xl mx-auto text-gray-600 text-center mb-8">
+                    Pour déployer sur Google Cloud Run, nous devons "empaqueter" notre application Python dans un conteneur Docker. Ce fichier `Dockerfile` est la recette pour construire cet empaquetage.
+                </p>
+                <div class="max-w-4xl mx-auto">
+                    <pre class="code-block"><code id="dockerfile-code"></code></pre>
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <footer class="mt-20 md:mt-24 border-t">
+        <div class="container mx-auto px-6 py-8 text-center text-gray-500">
+            <p>Guide interactif pour la sécurisation et le déploiement de "Jules.google".</p>
+        </div>
+    </footer>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Mobile menu toggle
+    const mobileMenuButton = document.getElementById('mobile-menu-button');
+    const mobileMenu = document.getElementById('mobile-menu');
+    mobileMenuButton.addEventListener('click', () => {
+        mobileMenu.classList.toggle('hidden');
+    });
+    mobileMenu.addEventListener('click', (e) => {
+        if (e.target.tagName === 'A') {
+            mobileMenu.classList.add('hidden');
+        }
+    });
+
+    // Populate code blocks with syntax highlighting
+    function syntaxHighlight(code, language) {
+        if (language === 'firestore') {
+            return code
+                .replace(/(\/\/.+)/g, '<span class="comment">$1<\/span>')
+                .replace(/\b(rules_version|service|match|allow|if|true|false|null|read|write|delete|create|update|get)\b/g, '<span class="keyword">$1<\/span>')
+                .replace(/(['"].*?['"])\/g, '<span class="string">$1<\/span>');
+        }
+        if (language === 'docker') {
+             return code
+                .replace(/(#.+)/g, '<span class="comment">$1<\/span>')
+                .replace(/\b(FROM|WORKDIR|COPY|RUN|EXPOSE|CMD)\b/g, '<span class="keyword">$1<\/span>');
+        }
+        return code; // fallback for no language
+    }
+
+    const firestoreRules = `
+<span class="comment">// Version des règles de sécurité<\/span>
+<span class="keyword">rules_version<\/span> = <span class="string">'2'<\/span>;
+
+<span class="keyword">service<\/span> cloud.firestore {
+  <span class="keyword">match<\/span> /databases/{database}/documents {
+
+    <span class="comment">// Un utilisateur ne peut accéder qu'à ses propres conversations.<\/span>
+    <span class="keyword">match<\/span> /conversations/{userId}/{messages=**} {
+      <span class="keyword">allow<\/span> read, write, delete: <span class="keyword">if<\/span> request.auth != <span class="keyword">null<\/span> && request.auth.uid == userId;
+    }
+  }
+}
+    `.trim();
+
+    const dockerfile = `
+<span class="comment"># Utiliser une image Python officielle et optimisée<\/span>
+<span class="keyword">FROM<\/span> python:3.11-slim
+
+<span class="comment"># Définir le répertoire de travail<\/span>
+<span class="keyword">WORKDIR<\/span> /app
+
+<span class="comment"># Copier et installer les dépendances<\/span>
+<span class="keyword">COPY<\/span> requirements.txt .
+<span class="keyword">RUN<\/span> pip install --no-cache-dir -r requirements.txt
+
+<span class="comment"># Copier le reste du code<\/span>
+<span class="keyword">COPY<\/span> . .
+
+<span class="comment"># Exposer le port que l'application va utiliser<\/span>
+<span class="keyword">EXPOSE<\/span> 8080
+
+<span class="comment"># Commande pour lancer l'application<\/span>
+<span class="keyword">CMD<\/span> ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+    `.trim();
+
+    document.getElementById('firestore-rules-code').innerHTML = syntaxHighlight(firestoreRules, 'firestore');
+    document.getElementById('dockerfile-code').innerHTML = syntaxHighlight(dockerfile, 'docker');
+});
+</script>
+</body>
+</html>

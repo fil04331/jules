@@ -1,0 +1,63 @@
+{
+  "name": "jules-vscode",
+  "displayName": "Jules.google Assistant",
+  "description": "Votre assistant IA personnel avec la puissance de Google et une mémoire personnalisée, directement dans VS Code.",
+  "version": "0.1.0",
+  "publisher": "jules-dev",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:jules-vscode.start"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "jules-vscode.start",
+        "title": "Démarrer Jules"
+      }
+    ],
+    "views": {
+      "activitybar": [
+        {
+          "id": "jules-view",
+          "name": "Jules",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "menus": {
+        "view/title": [
+            {
+                "command": "jules-vscode.start",
+                "when": "view == jules-view",
+                "group": "navigation"
+            }
+        ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "18.x",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "glob": "^10.3.10",
+    "mocha": "^10.2.0",
+    "typescript": "^5.3.3",
+    "@vscode/test-electron": "^2.3.8"
+  }
+}
