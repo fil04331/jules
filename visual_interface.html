@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF--8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jules.google - Interface Visuelle</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .chat-bubble-user {
+            background-color: #2563eb; /* bg-blue-600 */
+            border-bottom-right-radius: 0;
+        }
+        .chat-bubble-model {
+            background-color: #4b5563; /* bg-gray-600 */
+            border-bottom-left-radius: 0;
+        }
+        .gemini-btn {
+            background-color: rgba(75, 85, 99, 0.5); /* bg-gray-600/50 */
+            color: #d1d5db; /* text-gray-300 */
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            line-height: 1rem;
+            transition: background-color 0.2s;
+        }
+        .gemini-btn:hover:not(:disabled) {
+            background-color: rgba(107, 114, 128, 0.5); /* bg-gray-500/50 */
+        }
+        #persona-selector {
+            background-color: #374151;
+            border: 1px solid #4b5563;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+        }
+        /* Style pour l'éditeur de code */
+        #code-editor-code-container {
+            background-color: #282c34; /* Couleur de fond Atom One Dark */
+            height: 100%;
+            overflow: auto;
+            border-radius: 8px;
+        }
+        #file-explorer .file-item.active {
+            background-color: #3b82f6;
+        }
+        .patch-message pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background-color: #1f2937;
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 4px;
+            margin-bottom: 4px;
+        }
+        .patch-message code {
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans">
+
+    <div id="main-view" class="flex flex-col md:flex-row h-screen w-full">
+        <!-- Section Outils Créatifs & Connecteurs -->
+        <div class="w-full md:w-1/3 bg-gray-800 p-6 flex flex-col border-r border-gray-700 overflow-y-auto">
+             <h2 class="text-2xl font-bold text-center text-gray-200 mb-6">Outils & Connecteurs</h2>
+            
+            <div id="code-generator-section">
+                <h3 class="text-xl font-bold text-center text-gray-300 mb-4">Générateur de Projet</h3>
+                <form id="code-gen-form" class="flex flex-col">
+                    <div class="mb-4">
+                        <label for="prompt" class="block text-sm font-medium text-gray-300 mb-2">Décrivez votre projet</label>
+                        <textarea id="prompt" placeholder="Ex: 'Un simple site web avec une page index.html et un fichier style.css'" required class="w-full h-24 bg-gray-700 border border-gray-600 rounded-md p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-200"></textarea>
+                    </div>
+                    <button type="submit" id="generate-btn" class="w-full bg-blue-600 text-white font-bold rounded-md py-3 px-4 hover:bg-blue-500 disabled:bg-gray-600 disabled:cursor-not-allowed transition duration-200">
+                        Générer & Ouvrir l'éditeur
+                    </button>
+                </form>
+            </div>
+            <!-- Autres outils (générateur d'icônes, connecteurs) pourraient être ici -->
+        </div>
+
+        <!-- Section Chat -->
+        <div class="w-full md:w-2/3 flex flex-col h-full">
+             <header class="bg-gray-800 p-4 shadow-md z-10 border-b border-gray-700 flex justify-between items-center">
+                <div class="flex items-center space-x-4">
+                     <h1 class="text-xl font-bold text-gray-200">Jules.google</h1>
+                     <select id="persona-selector">
+                        <option value="default">Assistant (RAG)</option>
+                        <option value="web">✨ Recherche Web</option>
+                     </select>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button id="export-chat-btn" class="gemini-btn">Exporter le Chat</button>
+                    <button id="summarize-chat-btn" class="gemini-btn">✨ Résumer le chat</button>
+                </div>
+            </header>
+            <main id="chat-container" class="flex-1 overflow-y-auto p-6"></main>
+            <footer class="bg-gray-800 p-4 border-t border-gray-700">
+                <!-- Footer du chat -->
+            </footer>
+        </div>
+    </div>
+
+    <!-- VUE: Éditeur de code multi-fichiers -->
+    <div id="code-editor-view" class="fixed inset-0 bg-gray-900 z-50 hidden flex-col">
+        <header class="bg-gray-800 p-3 flex justify-between items-center border-b border-gray-700">
+            <h2 class="text-xl font-bold">Éditeur de Projet</h2>
+            <button id="close-editor-btn" class="bg-red-600 text-white font-bold rounded-md py-1 px-3 hover:bg-red-500 transition">
+                Fermer
+            </button>
+        </header>
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Explorateur de fichiers (gauche) -->
+            <div class="w-1/4 bg-gray-800 p-4 border-r border-gray-700 flex flex-col">
+                <div>
+                    <h3 class="font-bold mb-2">Fichiers du projet</h3>
+                    <div id="file-explorer" class="max-h-64 overflow-y-auto"></div>
+                </div>
+                 <div class="mt-4 space-y-2">
+                    <button id="download-zip-btn" class="w-full bg-green-600 text-white font-bold rounded-md py-2 px-4 hover:bg-green-500 transition">
+                        Télécharger .zip
+                    </button>
+                    <button id="review-project-btn" class="gemini-btn w-full text-base py-2">
+                        ✨ Analyser le Projet
+                    </button>
+                    <button id="generate-tests-btn" class="gemini-btn w-full text-base py-2">
+                        ✨ Générer des Tests
+                    </button>
+                    <!-- NOUVEAU: Bouton pour générer la documentation -->
+                    <button id="generate-docs-btn" class="gemini-btn w-full text-base py-2">
+                        ✨ Documenter le Projet
+                    </button>
+                 </div>
+                 <div class="mt-auto">
+                    <!-- Espace réservé en bas si nécessaire -->
+                 </div>
+            </div>
+            <!-- Éditeur (centre) -->
+            <div class="w-1/2 p-4 flex flex-col">
+                <h3 id="current-file-name" class="font-mono mb-2 text-gray-400"></h3>
+                <div id="code-editor-code-container" class="flex-1">
+                    <pre><code class="h-full"></code></pre>
+                </div>
+            </div>
+            <!-- Panneau de Patch / Analyse (droite) -->
+            <div class="w-1/4 bg-gray-800 p-4 border-l border-gray-700 flex flex-col">
+                <h3 class="font-bold mb-2">Analyse & Modification</h3>
+                <div id="patch-conversation" class="flex-1 bg-gray-900 rounded-md p-2 overflow-y-auto text-sm space-y-2">
+                    <!-- Les messages de patch et d'analyse apparaîtront ici -->
+                </div>
+                <form id="patch-form" class="mt-2">
+                    <textarea id="patch-input" placeholder="Demandez une modification pour le fichier actuel..." class="w-full h-20 bg-gray-700 border border-gray-600 rounded-md p-2 text-sm"></textarea>
+                    <button type="submit" id="patch-btn" class="w-full mt-2 bg-purple-600 text-white font-bold rounded-md py-2 hover:bg-purple-500">
+                        Appliquer le Patch
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Configuration & State ---
+            let fileCache = {};
+            let activeFilePath = null;
+
+            // --- Éléments du DOM ---
+            const dom = [
+                'main-view', 'code-editor-view', 'close-editor-btn', 'generate-btn', 'prompt',
+                'file-explorer', 'current-file-name', 'code-editor-code-container',
+                'patch-form', 'patch-input', 'patch-conversation', 'patch-btn', 'download-zip-btn',
+                'review-project-btn', 'generate-tests-btn', 'generate-docs-btn'
+            ].reduce((acc, id) => ({ ...acc, [id.replace(/-(\w)/g, (m, g) => g.toUpperCase())]: document.getElementById(id) }), {});
+
+            // --- Logique de l'éditeur de code ---
+            function openCodeEditor() {
+                dom.mainView.classList.add('hidden');
+                dom.codeEditorView.classList.remove('hidden');
+                dom.codeEditorView.classList.add('flex');
+            }
+
+            function closeCodeEditor() {
+                dom.mainView.classList.remove('hidden');
+                dom.codeEditorView.classList.add('hidden');
+                dom.codeEditorView.classList.remove('flex');
+            }
+            
+            function displayFileContent(filePath) {
+                if (!fileCache[filePath]) return;
+                activeFilePath = filePath;
+
+                dom.currentFileName.textContent = filePath;
+                const codeBlock = dom.codeEditorCodeContainer.querySelector('code');
+                codeBlock.textContent = fileCache[filePath];
+
+                const extension = filePath.split('.').pop();
+                const language = hljs.getLanguage(extension) ? extension : 'plaintext';
+                codeBlock.className = `language-${language} h-full`;
+                hljs.highlightElement(codeBlock);
+                
+                document.querySelectorAll('#file-explorer .file-item').forEach(el => {
+                    el.classList.toggle('active', el.dataset.path === filePath);
+                });
+            }
+            
+            function renderFileExplorer() {
+                dom.fileExplorer.innerHTML = '';
+                Object.keys(fileCache).sort().forEach(filePath => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item p-2 rounded-md cursor-pointer hover:bg-blue-500 text-sm';
+                    fileItem.textContent = filePath;
+                    fileItem.dataset.path = filePath;
+                    fileItem.onclick = () => displayFileContent(filePath);
+                    dom.fileExplorer.appendChild(fileItem);
+                });
+            }
+
+            function addPatchMessage(role, text, isHtml = false) {
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `p-2 rounded-lg patch-message ${role === 'user' ? 'bg-blue-900 self-end' : 'bg-gray-700 self-start'}`;
+                if (isHtml) {
+                    msgDiv.innerHTML = text;
+                } else {
+                    msgDiv.textContent = text;
+                }
+                dom.patchConversation.appendChild(msgDiv);
+                dom.patchConversation.scrollTop = dom.patchConversation.scrollHeight;
+            }
+
+            // --- Fonctions d'appel API ---
+            async function callGemini(systemPrompt, userPrompt) {
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+                const payload = { contents: [{ parts: [{ text: userPrompt }] }], systemInstruction: { parts: [{ text: systemPrompt }] } };
+                const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!response.ok) throw new Error("API call failed");
+                const result = await response.json();
+                return result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            }
+
+            // --- Logique des formulaires et boutons ---
+            dom.closeEditorBtn.addEventListener('click', closeCodeEditor);
+
+            dom.generateBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const prompt = dom.prompt.value.trim();
+                if (!prompt) return;
+
+                dom.generateBtn.disabled = true;
+                dom.generateBtn.textContent = 'Génération en cours...';
+
+                try {
+                    const systemPrompt = "Tu es un générateur de code expert. Crée une structure de fichiers complète basée sur la demande de l'utilisateur. Réponds UNIQUEMENT avec un objet JSON où les clés sont les noms de fichiers (avec chemin, ex: 'src/app.js') et les valeurs sont le contenu du fichier sous forme de chaîne de caractères. Ne mets pas de ```json au début ou à la fin.";
+                    const responseJson = await callGemini(systemPrompt, prompt);
+                    
+                    fileCache = JSON.parse(responseJson);
+                    
+                    renderFileExplorer();
+                    const firstFile = Object.keys(fileCache)[0];
+                    if (firstFile) displayFileContent(firstFile);
+                    openCodeEditor();
+                    
+                } catch (error) {
+                    alert(`Erreur de génération : ${error.message}. La réponse de l'IA n'était peut-être pas un JSON valide.`);
+                } finally {
+                    dom.generateBtn.disabled = false;
+                    dom.generateBtn.textContent = "Générer & Ouvrir l'éditeur";
+                }
+            });
+
+            dom.patchForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const patchRequest = dom.patchInput.value.trim();
+                if (!patchRequest || !activeFilePath) return;
+
+                addPatchMessage('user', patchRequest);
+                dom.patchInput.value = '';
+                dom.patchBtn.disabled = true;
+                dom.patchBtn.textContent = 'Application...';
+
+                try {
+                    const systemPrompt = "Tu es un expert en programmation qui modifie du code. L'utilisateur va te fournir son code actuel et une demande de modification. Ta réponse doit être UNIQUEMENT le code complet et mis à jour. N'ajoute aucune explication, commentaire ou formatage avant ou après le bloc de code.";
+                    const fullPrompt = `Voici le code actuel du fichier \`${activeFilePath}\`:\n\n\`\`\`\n${fileCache[activeFilePath]}\n\`\`\`\n\nApplique cette modification: ${patchRequest}`;
+                    const updatedCode = await callGemini(systemPrompt, fullPrompt);
+
+                    fileCache[activeFilePath] = updatedCode.replace(/```[a-zA-Z]*\n?|```/g, '').trim();
+                    displayFileContent(activeFilePath);
+                    addPatchMessage('model', 'Patch appliqué avec succès.');
+
+                } catch (error) {
+                    addPatchMessage('model', `Erreur lors du patch : ${error.message}`);
+                } finally {
+                    dom.patchBtn.disabled = false;
+                    dom.patchBtn.textContent = 'Appliquer le Patch';
+                }
+            });
+
+            dom.reviewProjectBtn.addEventListener('click', async () => {
+                if (Object.keys(fileCache).length === 0) {
+                    addPatchMessage('model', 'Aucun projet à analyser.');
+                    return;
+                }
+                
+                dom.reviewProjectBtn.disabled = true;
+                dom.reviewProjectBtn.textContent = 'Analyse en cours...';
+                addPatchMessage('model', 'Analyse du projet en cours...');
+
+                try {
+                    let projectContent = "Voici l'ensemble des fichiers du projet :\n\n";
+                    for (const filePath in fileCache) {
+                        projectContent += `--- DÉBUT DU FICHIER: ${filePath} ---\n`;
+                        projectContent += `${fileCache[filePath]}\n`;
+                        projectContent += `--- FIN DU FICHIER: ${filePath} ---\n\n`;
+                    }
+                    
+                    const systemPrompt = "Tu es un relecteur de code expert. Analyse le projet fourni par l'utilisateur, qui contient plusieurs fichiers. Fournis une analyse complète en Markdown qui inclut : 1. Un résumé global du projet. 2. Des suggestions d'amélioration (qualité du code, performance, sécurité). 3. La détection de bugs potentiels. Structure ta réponse avec des titres clairs (ex: `### Résumé`).";
+                    
+                    let review = await callGemini(systemPrompt, projectContent);
+                    
+                    review = review
+                        .replace(/### (.*?)\n/g, '<strong>$1</strong><br>')
+                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                        .replace(/`([^`]+)`/g, '<code class="bg-gray-700 rounded px-1 text-sm">$1</code>')
+                        .replace(/\n/g, '<br>');
+
+                    addPatchMessage('model', review, true);
+
+                } catch (error) {
+                     addPatchMessage('model', `Erreur lors de l'analyse : ${error.message}`);
+                } finally {
+                    dom.reviewProjectBtn.disabled = false;
+                    dom.reviewProjectBtn.textContent = '✨ Analyser le Projet';
+                }
+
+            });
+
+            dom.generateTestsBtn.addEventListener('click', async () => {
+                if (Object.keys(fileCache).length === 0) {
+                    addPatchMessage('model', 'Aucun projet à tester.');
+                    return;
+                }
+
+                dom.generateTestsBtn.disabled = true;
+                dom.generateTestsBtn.textContent = 'Génération des tests...';
+                addPatchMessage('model', 'Génération des tests en cours...');
+
+                try {
+                    let projectContent = "Voici l'ensemble des fichiers du projet :\n\n";
+                    for (const filePath in fileCache) {
+                        projectContent += `--- DÉBUT DU FICHIER: ${filePath} ---\n`;
+                        projectContent += `${fileCache[filePath]}\n`;
+                        projectContent += `--- FIN DU FICHIER: ${filePath} ---\n\n`;
+                    }
+
+                    const systemPrompt = "Tu es un ingénieur expert en assurance qualité logicielle. Analyse les fichiers du projet de l'utilisateur. Génère un unique fichier de test complet qui couvre les fonctionnalités principales. Choisis un framework de test approprié (par exemple, pytest pour Python, Jest pour React/JS, JUnit pour Java). Ta réponse doit être UNIQUEMENT un objet JSON avec une seule clé correspondant au nom du fichier de test (par exemple, 'test_app.py' ou 'App.test.js') et la valeur étant le code complet pour ce fichier. Ne fournis aucune explication ou formatage supplémentaire.";
+                    
+                    const responseJson = await callGemini(systemPrompt, projectContent);
+                    const newFiles = JSON.parse(responseJson);
+                    
+                    const newFilePath = Object.keys(newFiles)[0];
+                    if (newFilePath) {
+                        fileCache[newFilePath] = newFiles[newFilePath];
+                        renderFileExplorer();
+                        displayFileContent(newFilePath);
+                        addPatchMessage('model', `Fichier de test '${newFilePath}' généré et ajouté au projet.`);
+                    } else {
+                        throw new Error("La réponse de l'IA ne contenait pas de fichier de test valide.");
+                    }
+
+                } catch (error) {
+                    addPatchMessage('model', `Erreur lors de la génération des tests : ${error.message}`);
+                } finally {
+                    dom.generateTestsBtn.disabled = false;
+                    dom.generateTestsBtn.textContent = '✨ Générer des Tests';
+                }
+            });
+            
+            // NOUVEAU: Logique pour la génération de documentation
+            dom.generateDocsBtn.addEventListener('click', async () => {
+                if (Object.keys(fileCache).length === 0) {
+                    addPatchMessage('model', 'Aucun projet à documenter.');
+                    return;
+                }
+
+                dom.generateDocsBtn.disabled = true;
+                dom.generateDocsBtn.textContent = 'Génération de la doc...';
+                addPatchMessage('model', 'Génération du fichier README.md en cours...');
+
+                try {
+                    let projectContent = "Voici l'ensemble des fichiers du projet :\n\n";
+                    for (const filePath in fileCache) {
+                        // Exclure les fichiers de documentation existants pour éviter la redondance
+                        if (filePath.toLowerCase().includes('readme')) continue;
+                        projectContent += `--- DÉBUT DU FICHIER: ${filePath} ---\n`;
+                        projectContent += `${fileCache[filePath]}\n`;
+                        projectContent += `--- FIN DU FICHIER: ${filePath} ---\n\n`;
+                    }
+
+                    const systemPrompt = "Tu es un rédacteur technique expert. Analyse le code du projet fourni et génère un fichier README.md complet et professionnel. Le README doit inclure les sections suivantes : Titre du projet, Description courte, Installation (comment installer les dépendances), Utilisation (comment lancer le projet), et Structure des Fichiers. Ta réponse doit être uniquement le contenu Markdown du fichier README.md, sans aucun autre texte ou formatage.";
+                    
+                    const readmeContent = await callGemini(systemPrompt, projectContent);
+                    
+                    const readmePath = 'README.md';
+                    fileCache[readmePath] = readmeContent;
+                    renderFileExplorer();
+                    displayFileContent(readmePath);
+                    addPatchMessage('model', `Fichier '${readmePath}' généré et ajouté au projet.`);
+
+                } catch (error) {
+                    addPatchMessage('model', `Erreur lors de la génération de la documentation : ${error.message}`);
+                } finally {
+                    dom.generateDocsBtn.disabled = false;
+                    dom.generateDocsBtn.textContent = '✨ Documenter le Projet';
+                }
+            });
+
+
+            dom.downloadZipBtn.addEventListener('click', async () => {
+                if (Object.keys(fileCache).length === 0) return;
+                const zip = new JSZip();
+                for (const filePath in fileCache) {
+                    zip.file(filePath, fileCache[filePath]);
+                }
+                const content = await zip.generateAsync({ type: "blob" });
+                
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(content);
+                link.download = "projet-jules.zip";
+                link.click();
+                URL.revokeObjectURL(link.href);
+            });
+            
+            // Initialisation de l'application principale (chat, etc.)
+        });
+    </script>
+</body>
+</html>
