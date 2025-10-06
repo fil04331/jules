@@ -3,8 +3,9 @@
 import os
 import uvicorn
 import shutil
+import uuid
 import google.generativeai as genai
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Response
 from pydantic import BaseModel, Field
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -52,7 +53,6 @@ knowledge_collection = chroma_client.get_or_create_collection(
 )
 
 # --- Modèles de Données (Pydantic) ---
-# Inchangés
 class ChatRequest(BaseModel):
     prompt: str = Field(..., title="Prompt", max_length=5000)
     user_id: str = Field(..., title="User ID")
@@ -61,6 +61,20 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str = Field(..., title="Reply")
     session_id: str = Field(title="Session ID")
+
+# NOUVEAU: Modèles pour la génération et le téléchargement de code
+class CodeGenerationRequest(BaseModel):
+    prompt: str = Field(..., title="Description du code à générer", max_length=5000)
+    filename: str = Field("script.py", title="Nom de fichier suggéré pour le téléchargement")
+
+class CodeGenerationResponse(BaseModel):
+    code_id: str = Field(..., title="ID unique pour récupérer le code généré")
+    filename: str = Field(..., title="Nom de fichier à utiliser pour le téléchargement")
+
+# NOUVEAU: Cache en mémoire pour le code généré
+# Un simple dictionnaire pour stocker temporairement le code.
+# La clé sera un UUID, la valeur sera le code en string.
+generated_code_cache = {}
 
 # --- Initialisation de FastAPI ---
 app = FastAPI(
@@ -130,6 +144,71 @@ async def upload_knowledge(file: UploadFile = File(...)):
     finally:
         # Supprime le fichier temporaire
         os.remove(file_path)
+
+@app.post("/api/generate-code", response_model=CodeGenerationResponse, tags=["Code Generation"])
+async def generate_code(request: CodeGenerationRequest):
+    """
+    NOUVEAU ENDPOINT: Génère du code à partir d'un prompt et le rend disponible pour le téléchargement.
+    """
+    # 1. Créer un prompt spécialisé pour la génération de code pur
+    code_generation_prompt = f"""
+    Ta tâche est de générer uniquement le code source pour la demande suivante.
+    Ne fournis AUCUNE explication, commentaire en langage naturel, ou formatage de type Markdown avant ou après le bloc de code.
+    Le résultat doit être directement compilable ou interprétable.
+
+    Demande de l'utilisateur : "{request.prompt}"
+    """
+
+    try:
+        # 2. Appeler l'API Gemini avec ce prompt
+        response = model.generate_content(code_generation_prompt)
+        generated_code = response.text
+
+        # 3. Nettoyer la réponse pour enlever les ``` qui pourraient être ajoutés
+        # par le modèle malgré les instructions.
+        if generated_code.strip().startswith("```"):
+            lines = generated_code.strip().split('\n')
+            generated_code = '\n'.join(lines[1:-1])
+
+        # 4. Stocker le code généré dans le cache
+        code_id = str(uuid.uuid4())
+        generated_code_cache[code_id] = generated_code
+
+        # 5. Retourner l'ID et le nom de fichier au client
+        return CodeGenerationResponse(code_id=code_id, filename=request.filename)
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du code: {e}")
+
+
+@app.get("/api/download-code/{code_id}", tags=["Code Generation"])
+async def download_code(code_id: str, filename: str):
+    """
+    NOUVEAU ENDPOINT: Permet de télécharger le code généré précédemment via son ID.
+    """
+    # 1. Récupérer le code depuis le cache
+    generated_code = generated_code_cache.get(code_id)
+
+    if not generated_code:
+        # 2. Si l'ID n'existe pas, renvoyer une erreur 404
+        raise HTTPException(status_code=404, detail="Code non trouvé ou expiré.")
+
+    # 3. Créer une réponse avec le code en contenu
+    # media_type="application/octet-stream" est un type générique pour les fichiers binaires.
+    # On peut aussi utiliser "text/plain" pour du code pur.
+    response = Response(
+        content=generated_code,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
+
+    # 4. (Optionnel) Supprimer le code du cache après le téléchargement pour un usage unique
+    del generated_code_cache[code_id]
+
+    return response
+
 
 @app.post("/api/chat", response_model=ChatResponse, tags=["AI"])
 async def handle_chat(request: ChatRequest):
