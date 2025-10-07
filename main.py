@@ -4,9 +4,13 @@ import os
 import uvicorn
 import shutil
 import uuid
+import json
+import re
+import tempfile
+import subprocess
 import google.generativeai as genai
 from fastapi import FastAPI, HTTPException, UploadFile, File, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 import firebase_admin
 from firebase_admin import credentials, firestore
 import chromadb
@@ -208,6 +212,197 @@ async def download_code(code_id: str, filename: str):
     del generated_code_cache[code_id]
 
     return response
+
+
+# --- NOUVEAU: Modèles de Données pour les Projets ---
+class ProjectGenerationRequest(BaseModel):
+    prompt: str = Field(..., title="Description du projet à générer", max_length=10000)
+
+class ProjectGenerationResponse(BaseModel):
+    files: dict[str, str] = Field(..., title="Dictionnaire des fichiers générés (chemin: contenu)")
+
+class ProjectFiles(BaseModel):
+    files: dict[str, str] = Field(..., title="Dictionnaire des fichiers du projet (chemin: contenu)")
+
+class ReviewRequest(ProjectFiles):
+    pass
+
+class ReviewResponse(BaseModel):
+    review: str = Field(..., title="Analyse et suggestions pour le projet")
+
+class PatchRequest(BaseModel):
+    file_path: str = Field(..., title="Chemin du fichier à modifier")
+    code: str = Field(..., title="Code actuel du fichier")
+    prompt: str = Field(..., title="Instruction de modification")
+
+class PatchResponse(BaseModel):
+    updated_code: str = Field(..., title="Code mis à jour après le patch")
+
+class DocsRequest(ProjectFiles):
+    pass
+
+class DocsResponse(BaseModel):
+    readme_content: str = Field(..., title="Contenu du fichier README.md généré")
+
+class TestGenerationRequest(ProjectFiles):
+    pass
+
+class TestGenerationResponse(BaseModel):
+    file_path: str = Field(..., title="Chemin du fichier de test généré")
+    code: str = Field(..., title="Contenu du fichier de test généré")
+
+class GitRepoRequest(BaseModel):
+    repo_url: HttpUrl = Field(..., title="URL of the GitHub repository to import")
+
+
+# --- NOUVEAU: Fonctions Utilitaires pour l'IA ---
+async def call_gemini_with_prompt(system_prompt: str, user_prompt: str) -> str:
+    """Fonction générique pour appeler l'API Gemini avec un prompt système et utilisateur."""
+    try:
+        # Le modèle 'gemini-1.5-flash-latest' ne supporte pas `system_instruction` directement
+        # dans l'appel `generate_content`. On le préfixe au prompt utilisateur.
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        response = model.generate_content(full_prompt)
+        return response.text
+    except Exception as e:
+        # Log l'erreur pour le débogage côté serveur
+        print(f"Erreur lors de l'appel à l'API Gemini: {e}")
+        # Remonte une exception HTTP pour que le client soit informé
+        raise HTTPException(status_code=500, detail=f"Erreur interne lors de l'appel au modèle IA: {e}")
+
+# --- NOUVEAU: Routes de l'API pour la Génération de Projets ---
+
+@app.post("/api/generate-project", response_model=ProjectGenerationResponse, tags=["Project Generation"])
+async def generate_project(request: ProjectGenerationRequest):
+    """Génère une structure de projet complète (multi-fichiers) à partir d'un prompt."""
+    system_prompt = "Tu es un générateur de code expert. Crée une structure de fichiers complète basée sur la demande de l'utilisateur. Réponds UNIQUEMENT avec un objet JSON où les clés sont les noms de fichiers (avec chemin, ex: 'src/app.js') et les valeurs sont le contenu du fichier sous forme de chaîne de caractères. Ne mets pas de ```json au début ou à la fin."
+
+    response_json_str = await call_gemini_with_prompt(system_prompt, request.prompt)
+
+    try:
+        # Nettoyage de la réponse pour s'assurer que c'est un JSON valide
+        cleaned_str = response_json_str.strip()
+        if cleaned_str.startswith("```json"):
+            cleaned_str = cleaned_str[7:]
+        if cleaned_str.endswith("```"):
+            cleaned_str = cleaned_str[:-3]
+
+        files = json.loads(cleaned_str)
+        return ProjectGenerationResponse(files=files)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="La réponse de l'IA n'était pas un JSON valide.")
+
+@app.post("/api/review-project", response_model=ReviewResponse, tags=["Project Generation"])
+async def review_project(request: ReviewRequest):
+    """Analyse un projet existant et fournit une revue de code."""
+    project_content = "Voici l'ensemble des fichiers du projet :\n\n"
+    for file_path, code in request.files.items():
+        project_content += f"--- DÉBUT DU FICHIER: {file_path} ---\n{code}\n--- FIN DU FICHIER: {file_path} ---\n\n"
+
+    system_prompt = "Tu es un relecteur de code expert. Analyse le projet fourni. Fournis une analyse complète en Markdown qui inclut : 1. Un résumé global. 2. Des suggestions d'amélioration (qualité, performance, sécurité). 3. La détection de bugs potentiels. Structure ta réponse avec des titres clairs (ex: `### Résumé`)."
+
+    review = await call_gemini_with_prompt(system_prompt, project_content)
+    return ReviewResponse(review=review)
+
+@app.post("/api/apply-patch", response_model=PatchResponse, tags=["Project Generation"])
+async def apply_patch(request: PatchRequest):
+    """Applique une modification à un seul fichier de code."""
+    system_prompt = "Tu es un expert en programmation qui modifie du code. L'utilisateur va te fournir son code actuel et une demande de modification. Ta réponse doit être UNIQUEMENT le code complet et mis à jour. N'ajoute aucune explication, commentaire ou formatage avant ou après le bloc de code."
+    user_prompt = f"Voici le code actuel du fichier `{request.file_path}`:\n\n```\n{request.code}\n```\n\nApplique cette modification: {request.prompt}"
+
+    updated_code = await call_gemini_with_prompt(system_prompt, user_prompt)
+
+    # Nettoyage pour enlever les blocs de code markdown que le modèle pourrait ajouter
+    # Utilise re.sub pour remplacer les délimiteurs de bloc de code
+    cleaned_code = re.sub(r'```[a-zA-Z]*\n?|```', '', updated_code).strip()
+
+    return PatchResponse(updated_code=cleaned_code)
+
+@app.post("/api/generate-docs", response_model=DocsResponse, tags=["Project Generation"])
+async def generate_docs(request: DocsRequest):
+    """Génère une documentation (README.md) pour un projet."""
+    project_content = "Voici l'ensemble des fichiers du projet (sauf les README existants) :\n\n"
+    for file_path, code in request.files.items():
+        if 'readme' not in file_path.lower():
+            project_content += f"--- DÉBUT DU FICHIER: {file_path} ---\n{code}\n--- FIN DU FICHIER: {file_path} ---\n\n"
+
+    system_prompt = "Tu es un rédacteur technique expert. Analyse le code du projet fourni et génère un fichier README.md complet et professionnel. Le README doit inclure : Titre, Description, Installation, Utilisation, et Structure des Fichiers. Réponds uniquement avec le contenu Markdown du README."
+
+    readme_content = await call_gemini_with_prompt(system_prompt, project_content)
+    return DocsResponse(readme_content=readme_content)
+
+@app.post("/api/import-repo", response_model=ProjectGenerationResponse, tags=["Connectors"])
+async def import_repo(request: GitRepoRequest):
+    """Clones a Git repository and returns its file structure and content."""
+    repo_url = str(request.repo_url)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            # Clone the repository into the temporary directory
+            subprocess.run(
+                ["git", "clone", repo_url, temp_dir],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to clone repository. Error: {e.stderr}"
+            )
+
+        files = {}
+        # Walk through the directory and read files
+        for root, _, filenames in os.walk(temp_dir):
+            # Skip the .git directory
+            if '.git' in root.split(os.sep):
+                continue
+
+            for filename in filenames:
+                file_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(file_path, temp_dir)
+
+                # Ignore gitignored files if possible (simple check)
+                if ".gitignore" in filename:
+                    # This is a simplification. A full implementation would parse the .gitignore file.
+                    continue
+
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    files[relative_path] = content
+                except Exception:
+                    # Ignore files that can't be read as text (e.g., binary files)
+                    continue
+
+        return ProjectGenerationResponse(files=files)
+
+
+@app.post("/api/generate-tests", response_model=TestGenerationResponse, tags=["Project Generation"])
+async def generate_tests(request: TestGenerationRequest):
+    """Génère un fichier de test pour un projet."""
+    project_content = "Voici l'ensemble des fichiers du projet :\n\n"
+    for file_path, code in request.files.items():
+        project_content += f"--- DÉBUT DU FICHIER: {file_path} ---\n{code}\n--- FIN DU FICHIER: {file_path} ---\n\n"
+
+    system_prompt = "Tu es un ingénieur QA expert. Analyse le projet. Génère un unique fichier de test qui couvre les fonctionnalités principales. Choisis un framework de test approprié (ex: pytest, Jest, JUnit). Ta réponse doit être UNIQUEMENT un objet JSON avec deux clés : 'file_path' (le nom du fichier de test, ex: 'test_app.py') et 'code' (le contenu du fichier de test). Ne fournis aucune explication."
+
+    response_json_str = await call_gemini_with_prompt(system_prompt, project_content)
+
+    try:
+        # Nettoyage de la réponse
+        cleaned_str = response_json_str.strip()
+        if cleaned_str.startswith("```json"):
+            cleaned_str = cleaned_str[7:]
+        if cleaned_str.endswith("```"):
+            cleaned_str = cleaned_str[:-3]
+
+        test_data = json.loads(cleaned_str)
+        if 'file_path' not in test_data or 'code' not in test_data:
+            raise ValueError("Le JSON de l'IA ne contient pas les clés 'file_path' ou 'code'.")
+
+        return TestGenerationResponse(file_path=test_data['file_path'], code=test_data['code'])
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(status_code=500, detail=f"La réponse de l'IA pour les tests n'était pas un JSON valide ou bien formé : {e}")
 
 
 @app.post("/api/chat", response_model=ChatResponse, tags=["AI"])
