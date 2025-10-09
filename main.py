@@ -1,6 +1,7 @@
 # main.py
 # --- Imports ---
 import os
+from dotenv import load_dotenv
 import uvicorn
 import shutil
 import uuid
@@ -18,6 +19,9 @@ from chromadb.utils import embedding_functions
 from pypdf import PdfReader
 
 # --- Configuration & Initialisation ---
+
+# Charger les variables d'environnement depuis le fichier .env
+load_dotenv()
 
 # 1. Variables d'environnement et API Keys
 # GOOGLE_API_KEY est nécessaire pour Gemini ET pour l'embedding.
