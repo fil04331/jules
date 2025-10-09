@@ -1,0 +1,27 @@
+.gemini-btn {
+    background-color: rgba(75, 85, 99, 0.5);
+    color: #d1d5db;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    transition: background-color 0.2s;
+    border: 1px solid #4b5563;
+}
+
+.gemini-btn:hover:not(:disabled) {
+    background-color: rgba(107, 114, 128, 0.5);
+}
+
+.gemini-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.patch-message pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    background-color: transparent;
+    padding: 0;
+    margin: 0;
+}

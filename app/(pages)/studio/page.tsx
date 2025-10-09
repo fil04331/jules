@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/atom-one-dark.css';
 import JSZip from 'jszip';
+import styles from './Studio.module.css';
 
 // Helper function to add a message to a conversation panel
 const addMessage = (setter: Function, role: 'user' | 'model' | 'system', text: string, isHtml: boolean = false) => {
@@ -237,13 +238,13 @@ export default function StudioPage() {
                             <button onClick={handleDownloadZip} className="w-full bg-green-600 text-white font-bold rounded-md py-2 px-4 hover:bg-green-500 transition">
                                 Télécharger .zip
                             </button>
-                            <button onClick={() => runProjectAnalysis('/api/review-project', setIsReviewing, '✨ Analyser le Projet', 'Analyse du projet en cours...')} disabled={isReviewing} className="gemini-btn w-full text-base py-2">
+                            <button onClick={() => runProjectAnalysis('/api/review-project', setIsReviewing, '✨ Analyser le Projet', 'Analyse du projet en cours...')} disabled={isReviewing} className={`${styles.geminiBtn} w-full text-base py-2`}>
                                 {isReviewing ? 'Analyse en cours...' : '✨ Analyser le Projet'}
                             </button>
-                            <button onClick={() => runProjectAnalysis('/api/generate-tests', setIsTesting, '✨ Générer des Tests', 'Génération des tests...')} disabled={isTesting} className="gemini-btn w-full text-base py-2">
+                            <button onClick={() => runProjectAnalysis('/api/generate-tests', setIsTesting, '✨ Générer des Tests', 'Génération des tests...')} disabled={isTesting} className={`${styles.geminiBtn} w-full text-base py-2`}>
                                 {isTesting ? 'Génération en cours...' : '✨ Générer des Tests'}
                             </button>
-                             <button onClick={() => runProjectAnalysis('/api/generate-docs', setIsDocGen, '✨ Documenter le Projet', 'Génération de la doc...')} disabled={isDocGen} className="gemini-btn w-full text-base py-2">
+                             <button onClick={() => runProjectAnalysis('/api/generate-docs', setIsDocGen, '✨ Documenter le Projet', 'Génération de la doc...')} disabled={isDocGen} className={`${styles.geminiBtn} w-full text-base py-2`}>
                                 {isDocGen ? 'Génération en cours...' : '✨ Documenter le Projet'}
                             </button>
                         </div>
@@ -264,7 +265,7 @@ export default function StudioPage() {
                         <h3 className="font-bold mb-2">Analyse & Modification</h3>
                         <div ref={patchConversationRef} className="flex-1 bg-gray-900 rounded-md p-2 overflow-y-auto text-sm space-y-2">
                            {patchConversation.map((msg, index) => (
-                                <div key={index} className={`p-2 rounded-lg patch-message ${msg.role === 'user' ? 'bg-blue-900 self-end' : 'bg-gray-700 self-start'}`}>
+                                <div key={index} className={`p-2 rounded-lg ${styles.patchMessage} ${msg.role === 'user' ? 'bg-blue-900 self-end' : 'bg-gray-700 self-start'}`}>
                                     {msg.isHtml ? <div dangerouslySetInnerHTML={{ __html: msg.text }} /> : <pre className="whitespace-pre-wrap font-sans">{msg.text}</pre>}
                                 </div>
                            ))}
@@ -352,32 +353,6 @@ export default function StudioPage() {
                     </form>
                 </div>
             </div>
-             <style jsx global>{`
-                .gemini-btn {
-                    background-color: rgba(75, 85, 99, 0.5);
-                    color: #d1d5db;
-                    padding: 8px 16px;
-                    border-radius: 6px;
-                    font-size: 0.875rem;
-                    line-height: 1.25rem;
-                    transition: background-color 0.2s;
-                    border: 1px solid #4b5563;
-                }
-                .gemini-btn:hover:not(:disabled) {
-                    background-color: rgba(107, 114, 128, 0.5);
-                }
-                .gemini-btn:disabled {
-                    cursor: not-allowed;
-                    opacity: 0.7;
-                }
-                .patch-message pre {
-                    white-space: pre-wrap;
-                    word-wrap: break-word;
-                    background-color: transparent;
-                    padding: 0;
-                    margin: 0;
-                }
-             `}</style>
         </div>
     );
 }
