@@ -1,1 +1,21 @@
+# Fichier de configuration pour Firebase App Hosting
+# Spécifie l'environnement d'exécution de votre backend.
+# Pour une application FastAPI, nous utilisons un conteneur managé.
+run:
+  # L'ID du service Cloud Run qui sera créé. Vous pouvez le nommer comme vous voulez.
+  serviceId: jules-backend
+  # La région où votre backend sera hébergé.
+  region: us-east4 # Par exemple, vous pouvez choisir la plus proche de vous.
 
+# La section la plus importante pour votre question.
+# C'est ici que vous enregistrez les routes pour un suivi détaillé.
+monitoredRoutes:
+  - route: /api/chat # Toutes les méthodes HTTP (POST, GET, etc.) seront surveillées pour cette route.
+  - route: /api/generate-project
+  - route: /api/upload
+  - route: /api/import-repo
+  # Vous pouvez ajouter d'autres routes de la même manière.
+  - route: /api/review-project
+  - route: /api/apply-patch
+  - route: /api/generate-docs
+  - route: /api/generate-tests
