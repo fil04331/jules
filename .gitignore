@@ -1,27 +1,47 @@
 # Dependencies
-/node_modules
+/node_modules/
+/vscode-extension/node_modules/
+
+# Next.js
+/.next/
+
+# VS Code Extension
+/vscode-extension/out/
+*.vsix
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+.env.*
+!.env.example
+
+# Database & Temporary Files
+chroma_db/
+temp_uploads/
+jules.google.app.zip
 
 # Build artifacts
-/.next/
-/out/
+build/
+dist/
 
 # Log files
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-*.log
 
-# Python artifacts
-__pycache__/
-
-# Database
-chroma_db/
-
-# Temporary files
-jules-scratch/
-
-# Local env files
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
