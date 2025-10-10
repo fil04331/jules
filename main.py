@@ -16,6 +16,21 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from pypdf import PdfReader
 from google.cloud import aiplatform
+from google.cloud import secretmanager
+
+# --- Helper Functions ---
+def access_secret_version(secret_version_id):
+    """
+    Access the payload for the given secret version and return it.
+    e.g., "projects/my-project/secrets/my-secret/versions/latest"
+    """
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        response = client.access_secret_version(name=secret_version_id)
+        return response.payload.data.decode("UTF-8")
+    except Exception as e:
+        print(f"Erreur lors de l'accès au secret {secret_version_id}: {e}")
+        return None
 
 # --- Configuration & Initialisation ---
 
@@ -24,17 +39,26 @@ load_dotenv()
 
 # 1. Variables d'environnement et API Keys
 try:
-    GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
     GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
     GCP_REGION = os.environ.get("GCP_REGION")
     VECTOR_SEARCH_INDEX_ID = os.environ.get("VECTOR_SEARCH_INDEX_ID")
     VECTOR_SEARCH_ENDPOINT_ID = os.environ.get("VECTOR_SEARCH_ENDPOINT_ID")
 
-    if not all([GOOGLE_API_KEY, GCP_PROJECT_ID, GCP_REGION, VECTOR_SEARCH_INDEX_ID, VECTOR_SEARCH_ENDPOINT_ID]):
-        print("WARNING: One or more Google Cloud environment variables are missing. RAG and code generation features may not work.")
+    # Récupérer le nom de la ressource du secret depuis les variables d'environnement
+    google_api_key_secret = os.environ.get("GOOGLE_API_KEY_SECRET")
+    if not google_api_key_secret:
+        raise KeyError("La variable d'environnement GOOGLE_API_KEY_SECRET n'est pas définie.")
+
+    # Accéder à la clé API depuis Secret Manager
+    GOOGLE_API_KEY = access_secret_version(google_api_key_secret)
+    if not GOOGLE_API_KEY:
+        raise ValueError("Impossible de récupérer la clé API depuis Secret Manager.")
+
+    if not all([GCP_PROJECT_ID, GCP_REGION, VECTOR_SEARCH_INDEX_ID, VECTOR_SEARCH_ENDPOINT_ID]):
+        print("WARNING: One or more Google Cloud environment variables are missing. RAG features may not work.")
 
     genai.configure(api_key=GOOGLE_API_KEY)
-except KeyError as e:
+except (KeyError, ValueError) as e:
     print(f"ERREUR de configuration: {e}")
 
 # 2. Initialisation de Firebase Admin SDK
