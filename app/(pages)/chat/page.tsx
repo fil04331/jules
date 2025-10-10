@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import { fetchApi } from '../../services/api'; // MODIFIÉ: Import de fetchApi
 
 // --- Types ---
 type Message = {
@@ -51,18 +52,11 @@ export default function ChatPage() {
     setError('');
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/chat', {
+      const data = await fetchApi('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: currentInput, user_id: userId, session_id: sessionId }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Erreur de communication avec le backend.');
-      }
-
-      const data = await response.json();
       const modelMessage: Message = { role: 'model', parts: data.reply };
       setMessages(prev => [...prev, modelMessage]);
 
@@ -103,16 +97,11 @@ export default function ChatPage() {
     formData.append('file', file);
 
     try {
-      // Appel à l'endpoint d'upload du backend
-      const response = await fetch('http://127.0.0.1:8000/api/upload', {
+      // Appel à l'endpoint d'upload du backend via fetchApi
+      await fetchApi('/api/upload', {
         method: 'POST',
-        body: formData, // Pas de header 'Content-Type', le navigateur le gère pour FormData
+        body: formData,
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "L'upload du fichier a échoué.");
-      }
       
       setUploadStatus(`✅ "${file.name}" a été ajouté avec succès à la mémoire de Jules.`);
 
