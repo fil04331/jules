@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
+import { fetchApi, getApiUrl } from '../../services/api';
 
 export default function CodeGeneratorPage() {
   // --- State Hooks ---
@@ -19,18 +20,10 @@ export default function CodeGeneratorPage() {
     setResult(null);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/generate-code', {
+      const data = await fetchApi('/api/generate-code', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, filename }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to generate code.');
-      }
-
-      const data = await response.json();
       setResult({ codeId: data.code_id, filename: data.filename });
 
     } catch (err: any) {
@@ -105,7 +98,7 @@ export default function CodeGeneratorPage() {
               <div className="mt-6 text-center">
                 <p className="text-green-400 mb-3">✅ Code generated successfully!</p>
                 <a
-                  href={`http://127.0.0.1:8000/api/download-code/${result.codeId}?filename=${encodeURIComponent(result.filename)}`}
+                  href={getApiUrl(`/api/download-code/${result.codeId}?filename=${encodeURIComponent(result.filename)}`)}
                   download={result.filename}
                   className="inline-block bg-green-600 text-white font-bold rounded-md py-2 px-5 hover:bg-green-500 transition duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-900"
                 >

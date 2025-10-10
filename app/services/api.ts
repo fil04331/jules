@@ -1,77 +1,50 @@
 // app/services/api.ts
 
-/**
- * Détermine l'URL de base de l'API en fonction de l'environnement.
- * En production, il utilisera la variable d'environnement NEXT_PUBLIC_API_URL.
- * En développement, il pointera vers le backend local.
- */
-const getBaseUrl = (): string => {
-  // Cette variable est définie par Vercel/Next.js
-  if (process.env.NODE_ENV === 'production') {
-    // Assurez-vous que cette variable est bien configurée dans vos paramètres Vercel
-    return process.env.NEXT_PUBLIC_API_URL || '';
+function getBaseUrl() {
+  if (typeof window !== 'undefined') {
+    // Client-side, use relative path
+    return '';
   }
-  // URL pour le développement local
-  return 'http://127.0.0.1:8000';
-};
+  // Server-side, use the appropriate base URL
+  // This might be from an environment variable in a real deployment
+  return process.env.BACKEND_URL || 'http://127.0.0.1:8000';
+}
 
-const API_BASE_URL = getBaseUrl();
+export async function fetchApi(path: string, options: RequestInit = {}) {
+  const url = `${getBaseUrl()}${path}`;
 
-/**
- * Une fonction fetch générique pour appeler votre backend.
- * @param endpoint Le point d'accès de l'API (ex: '/api/chat')
- * @param options Les options de la requête fetch (method, headers, body)
- * @returns La réponse JSON de l'API
- */
-export const fetchApi = async <T>(endpoint: string, options: RequestInit = {}): Promise<T> => {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const headers: HeadersInit = { ...options.headers };
 
-  if (!API_BASE_URL && process.env.NODE_ENV === 'production') {
-      throw new Error("L'URL de l'API (NEXT_PUBLIC_API_URL) n'est pas configurée pour la production.");
+  // Don't set Content-Type if body is FormData, let the browser handle it.
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
   }
 
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
+  const response = await fetch(url, {
+    ...options,
+    headers: headers,
+  });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ detail: 'Réponse invalide du serveur.' }));
-      throw new Error(errorData.detail || `Erreur du serveur: ${response.status}`);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error(`Erreur lors de l'appel à l'API sur ${endpoint}:`, error);
-    // Propage l'erreur pour que le composant puisse la gérer
-    throw error;
-  }
-};
-
-/**
- * Une fonction spécifique pour les téléchargements de fichiers qui attend une réponse de type 'blob'.
- * @param endpoint Le point d'accès de l'API pour le téléchargement
- * @returns Un objet Blob représentant le fichier
- */
-export const downloadApi = async (endpoint: string): Promise<Blob> => {
-    const url = `${API_BASE_URL}${endpoint}`;
-     if (!API_BASE_URL && process.env.NODE_ENV === 'production') {
-      throw new Error("L'URL de l'API (NEXT_PUBLIC_API_URL) n'est pas configurée pour la production.");
-    }
-
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error(`API Error (${response.status}): ${errorBody}`);
+    // Try to parse error response as JSON
     try {
-        const response = await fetch(url);
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ detail: 'Réponse invalide du serveur.' }));
-            throw new Error(errorData.detail || `Erreur du serveur: ${response.status}`);
-        }
-        return await response.blob();
-    } catch (error) {
-        console.error(`Erreur lors du téléchargement depuis ${endpoint}:`, error);
-        throw error;
+      const errorJson = JSON.parse(errorBody);
+      throw new Error(errorJson.detail || `API request failed with status ${response.status}`);
+    } catch (parseError) {
+      throw new Error(`API request failed with status ${response.status}: ${errorBody}`);
     }
+  }
+
+  // Handle cases where the response might not be JSON
+  const contentType = response.headers.get('content-type');
+  if (contentType && contentType.indexOf('application/json') !== -1) {
+    return response.json();
+  }
+  return response.text();
+}
+
+export function getApiUrl(path: string) {
+  return `${getBaseUrl()}${path}`;
 }
