@@ -29,7 +29,7 @@ def access_secret_version(secret_version_id):
         response = client.access_secret_version(name=secret_version_id)
         return response.payload.data.decode("UTF-8")
     except Exception as e:
-        print(f"Erreur lors de l'accès au secret {secret_version_id}: {e}")
+        print(f"Erreur lors de l'accès au secret: {e}")
         return None
 
 # --- Configuration & Initialisation ---
