@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint . --format @microsoft/eslint-formatter-sarif --output-file eslint-results.sarif"
+    "lint": "eslint . --format @microsoft/eslint-formatter-sarif --output-file eslint-results.sarif",
+    "postinstall": "cd functions && npm ci"
   },
   "dependencies": {
     "@dataconnect/generated": "file:src/dataconnect-generated",
