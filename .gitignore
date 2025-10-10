@@ -30,6 +30,7 @@ jules.google.app.zip
 # Build artifacts
 build/
 dist/
+.coverage
 
 # Log files
 *.log
