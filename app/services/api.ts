@@ -1,13 +1,23 @@
 // app/services/api.ts
 
 function getBaseUrl() {
+  const isDevelopment = process.env.NODE_ENV === 'development';
+
+  // In development, we need the full URL to the backend for both client and server.
+  if (isDevelopment) {
+    return 'http://127.0.0.1:8000';
+  }
+
+  // In production:
+  // On the client, use a relative path. Assumes the API is on the same domain or proxied.
   if (typeof window !== 'undefined') {
-    // Client-side, use relative path
     return '';
   }
-  // Server-side, use the appropriate base URL
-  // This might be from an environment variable in a real deployment
-  return process.env.BACKEND_URL || 'http://127.0.0.1:8000';
+
+  // On the server, use the internal backend URL set by an environment variable.
+  // This is for server-to-service communication in a containerized environment.
+  // Fallback to a relative path if not set.
+  return process.env.BACKEND_URL || '';
 }
 
 export async function fetchApi(path: string, options: RequestInit = {}) {

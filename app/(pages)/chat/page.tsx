@@ -60,7 +60,7 @@ export default function ChatPage() {
       const modelMessage: Message = { role: 'model', parts: data.reply };
       setMessages(prev => [...prev, modelMessage]);
 
-    } catch (err: any) {
+    } catch (err: any)
       setError(err.message);
       const errorMessage: Message = { role: 'model', parts: `Désolé, une erreur est survenue : ${err.message}` };
       setMessages(prev => [...prev, errorMessage]);
