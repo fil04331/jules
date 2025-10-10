@@ -23,11 +23,11 @@ function getBaseUrl() {
 export async function fetchApi(path: string, options: RequestInit = {}) {
   const url = `${getBaseUrl()}${path}`;
 
-  const headers: HeadersInit = { ...options.headers };
+  const headers = new Headers(options.headers);
 
   // Don't set Content-Type if body is FormData, let the browser handle it.
   if (!(options.body instanceof FormData)) {
-    headers['Content-Type'] = 'application/json';
+    headers.set('Content-Type', 'application/json');
   }
 
   const response = await fetch(url, {
