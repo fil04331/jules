@@ -19,7 +19,7 @@ from firebase_admin import credentials, firestore
 from pypdf import PdfReader
 from google.cloud import aiplatform
 from google.cloud import secretmanager
-from auth import verify_token
+from auth import verify_token, verify_admin
 import redis
 import hashlib
 from google.api_core import exceptions as google_exceptions
@@ -444,6 +444,16 @@ Question de l'utilisateur: {req_body.prompt}"""
     except Exception as e:
         logger.error(f"Erreur interne lors du traitement du chat: {e}")
         raise HTTPException(status_code=500, detail=f"Erreur interne lors du traitement du chat: {str(e)}")
+
+
+@app.get("/api/is_admin", tags=["Auth"])
+async def check_admin_status(token: dict = Depends(verify_admin)):
+    """
+    An endpoint to check if the current user is an admin.
+    This endpoint is protected by the `verify_admin` dependency.
+    """
+    return {"is_admin": True}
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))

@@ -17,6 +17,11 @@ export default function HomePage() {
               Go to Code Generator
             </a>
           </Link>
+          <Link href="/admin" legacyBehavior>
+            <a className="bg-purple-600 text-white font-bold rounded-md py-3 px-6 hover:bg-purple-500 transition duration-200">
+              Go to Admin
+            </a>
+          </Link>
         </div>
       </div>
     </div>

@@ -56,3 +56,25 @@ async def verify_token(creds: HTTPAuthorizationCredentials = Depends(bearer_sche
             detail=f"Could not validate credentials: {e}",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+async def verify_admin(decoded_token: dict = Depends(verify_token)) -> dict:
+    """
+    Verifies that the user is an admin by checking for an 'admin' claim.
+
+    This dependency relies on `verify_token` to first validate the token.
+
+    Args:
+        decoded_token: The payload from the verified token.
+
+    Returns:
+        The decoded token claims if the user is an admin.
+
+    Raises:
+        HTTPException: 403 Forbidden if the 'admin' claim is not present or not true.
+    """
+    if not decoded_token.get("admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not authorized to access this resource.",
+        )
+    return decoded_token
