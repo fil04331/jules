@@ -25,6 +25,7 @@ from google.api_core import exceptions as google_exceptions
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from rag_utils import rerank_documents, extract_keywords
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -312,17 +313,27 @@ async def handle_chat(request: Request, req_body: ChatRequest, token: dict = Dep
 
         context = ""
         if vector_search_endpoint:
-            embedding_result = genai.embed_content(model="models/text-embedding-004", content=[req_body.prompt], task_type="RETRIEVAL_QUERY")
+            keywords = extract_keywords(req_body.prompt, model)
+            expanded_query = req_body.prompt + " " + " ".join(keywords)
+            logger.info(f"Expanded query for embedding: {expanded_query}")
+
+            embedding_result = genai.embed_content(model="models/text-embedding-004", content=[expanded_query], task_type="RETRIEVAL_QUERY")
             prompt_embedding = embedding_result['embedding'][0]
 
-            search_results = vector_search_endpoint.find_neighbors(queries=[prompt_embedding], deployed_index_id=VECTOR_SEARCH_INDEX_ID.split('/')[-1], num_neighbors=3)
+            search_results = vector_search_endpoint.find_neighbors(queries=[prompt_embedding], deployed_index_id=VECTOR_SEARCH_INDEX_ID.split('/')[-1], num_neighbors=10)
 
             if search_results and search_results[0]:
                 neighbor_ids = [neighbor.datapoint.datapoint_id for neighbor in search_results[0]]
                 docs_ref = db.collection('document_chunks').where(firestore.FieldPath.document_id(), 'in', neighbor_ids).stream()
                 id_to_text_map = {doc.id: doc.to_dict().get('text', '') for doc in docs_ref}
-                context_documents = [id_to_text_map.get(nid, '') for nid in neighbor_ids]
-                context = "\n---\n".join(filter(None, context_documents))
+
+                # Initial retrieval in order from vector search
+                retrieved_documents = [id_to_text_map.get(nid, '') for nid in neighbor_ids if id_to_text_map.get(nid)]
+
+                # Re-rank the documents
+                reranked_docs = rerank_documents(req_body.prompt, retrieved_documents, model)
+
+                context = "\n---\n".join(reranked_docs)
 
         if context:
             augmented_prompt = f"""En te basant sur le contexte suivant, réponds à la question de l'utilisateur.
