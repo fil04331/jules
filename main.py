@@ -124,6 +124,7 @@ limiter = Limiter(key_func=get_remote_address, storage_uri=f"redis://{REDIS_HOST
 class ChatRequest(BaseModel):
     prompt: str = Field(..., title="Prompt", max_length=5000)
     session_id: str = Field(..., title="Session ID")
+    parent_message_id: str | None = Field(default=None, title="Parent Message ID")
 
 class ChatResponse(BaseModel):
     reply: str = Field(..., title="Reply")
@@ -300,32 +301,80 @@ async def download_code(request: Request, code_id: str, filename: str, token: di
         logger.error(f"Erreur inattendue lors du téléchargement du code: {e}")
         raise HTTPException(status_code=500, detail=f"Erreur inattendue: {e}")
 
-async def stream_chat_response(chat_session, augmented_prompt, messages_ref, user_prompt):
+async def stream_chat_response(chat_session, augmented_prompt, messages_ref, user_prompt, parent_id, session_ref, user_message_id, model_message_id):
     """
-    An async generator that streams the chat response and saves the full conversation.
+    An async generator that streams the chat response and saves the full conversation with versioning.
     """
     try:
+        # First, yield the IDs to the client
+        yield f"__IDS__::{user_message_id}::{model_message_id}\n"
+
         response_stream = chat_session.send_message(augmented_prompt, stream=True)
         full_reply = ""
         for chunk in response_stream:
-            # Some chunks might be empty, filter them out
             if chunk.text:
                 full_reply += chunk.text
                 yield chunk.text
     except Exception as e:
         logger.error(f"Error during streaming response generation: {e}")
-        # Yield a final error message to the client
         yield f"ERREUR: {str(e)}"
     finally:
-        # This block executes whether the stream completed successfully or with an error
         logger.info(f"Streaming finished. Full reply length: {len(full_reply)}")
-        if full_reply: # Save conversation only if a response was generated
+        if full_reply:
             try:
-                messages_ref.add({'role': 'user', 'parts': [user_prompt], 'timestamp': firestore.SERVER_TIMESTAMP})
-                messages_ref.add({'role': 'model', 'parts': [full_reply], 'timestamp': firestore.SERVER_TIMESTAMP})
-                logger.info("Chat history successfully saved to Firestore.")
+                user_message_doc = {
+                    'message_id': user_message_id,
+                    'parent_id': parent_id,
+                    'role': 'user',
+                    'parts': [user_prompt],
+                    'timestamp': firestore.SERVER_TIMESTAMP
+                }
+                model_message_doc = {
+                    'message_id': model_message_id,
+                    'parent_id': user_message_id,
+                    'role': 'model',
+                    'parts': [full_reply],
+                    'timestamp': firestore.SERVER_TIMESTAMP
+                }
+
+                batch = db.batch()
+                batch.set(messages_ref.document(user_message_id), user_message_doc)
+                batch.set(messages_ref.document(model_message_id), model_message_doc)
+                batch.set(session_ref, {'latest_message_id': model_message_id}, merge=True)
+                batch.commit()
+
+                logger.info("Chat history successfully saved to Firestore with versioning.")
             except Exception as e:
-                logger.error(f"Failed to save chat history to Firestore: {e}")
+                logger.error(f"Failed to save versioned chat history to Firestore: {e}")
+
+def get_history_for_branch(messages_ref, leaf_message_id):
+    """
+    Constructs the conversation history for a specific branch by traversing parent_id.
+    """
+    if not leaf_message_id:
+        return []
+
+    history = []
+    current_id = leaf_message_id
+    # Limit history depth to prevent infinite loops and excessive reads
+    for _ in range(50): # Limit to 50 turns (100 messages)
+        if not current_id:
+            break
+        try:
+            doc = messages_ref.document(current_id).get()
+            if not doc.exists:
+                logger.warning(f"History traversal stopped: message {current_id} not found.")
+                break
+
+            message_data = doc.to_dict()
+            # Prepend the message to build the history in chronological order
+            history.insert(0, {'role': message_data['role'], 'parts': message_data['parts']})
+            current_id = message_data.get('parent_id')
+        except Exception as e:
+            logger.error(f"Error while fetching message {current_id} from history: {e}")
+            break
+
+    return history
 
 @app.post("/api/chat", tags=["AI"])
 @limiter.limit("60/minute")
@@ -338,13 +387,13 @@ async def handle_chat(request: Request, req_body: ChatRequest, token: dict = Dep
         if not user_id:
             raise HTTPException(status_code=400, detail="User ID not found in token.")
 
+        # --- RAG & Context Augmentation (No changes here) ---
         context = ""
+        # ... (RAG logic is unchanged)
         if vector_search_endpoint:
             embedding_result = genai.embed_content(model="models/text-embedding-004", content=[req_body.prompt], task_type="RETRIEVAL_QUERY")
             prompt_embedding = embedding_result['embedding'][0]
-
             search_results = vector_search_endpoint.find_neighbors(queries=[prompt_embedding], deployed_index_id=VECTOR_SEARCH_INDEX_ID.split('/')[-1], num_neighbors=3)
-
             if search_results and search_results[0]:
                 neighbor_ids = [neighbor.datapoint.datapoint_id for neighbor in search_results[0]]
                 docs_ref = db.collection('document_chunks').where(firestore.FieldPath.document_id(), 'in', neighbor_ids).stream()
@@ -363,14 +412,29 @@ Question de l'utilisateur: {req_body.prompt}"""
         else:
             augmented_prompt = req_body.prompt
 
-        messages_ref = db.collection('users').document(user_id).collection('sessions').document(req_body.session_id).collection('messages')
-        history_docs = messages_ref.order_by("timestamp").stream()
-        history = [doc.to_dict() for doc in history_docs]
+        # --- Versioning Logic ---
+        session_ref = db.collection('users').document(user_id).collection('sessions').document(req_body.session_id)
+        messages_ref = session_ref.collection('messages')
 
+        parent_id = req_body.parent_message_id
+        if not parent_id:
+            try:
+                session_doc = session_ref.get()
+                if session_doc.exists:
+                    parent_id = session_doc.to_dict().get('latest_message_id')
+            except Exception as e:
+                logger.warning(f"Could not fetch session to get latest_message_id: {e}")
+                parent_id = None
+
+        # --- New History Retrieval & ID Generation ---
+        history = get_history_for_branch(messages_ref, parent_id)
         chat_session = model.start_chat(history=history)
 
+        user_message_id = str(uuid.uuid4())
+        model_message_id = str(uuid.uuid4())
+
         return StreamingResponse(
-            stream_chat_response(chat_session, augmented_prompt, messages_ref, req_body.prompt),
+            stream_chat_response(chat_session, augmented_prompt, messages_ref, req_body.prompt, parent_id, session_ref, user_message_id, model_message_id),
             media_type="text/plain"
         )
     except google_exceptions.GoogleAPICallError as e:
