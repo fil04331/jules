@@ -8,3 +8,5 @@ pypdf
 python-dotenv
 python-multipart
 google-cloud-secret-manager
+python-jose-cryptodome
+redis
