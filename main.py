@@ -12,6 +12,7 @@ import logging
 from dotenv import load_dotenv
 import google.generativeai as genai
 from fastapi import FastAPI, HTTPException, UploadFile, File, Response, Depends, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, HttpUrl
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -25,7 +26,6 @@ from google.api_core import exceptions as google_exceptions
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from rag_utils import rerank_documents, extract_keywords
 
 # --- Logging Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -300,7 +300,34 @@ async def download_code(request: Request, code_id: str, filename: str, token: di
         logger.error(f"Erreur inattendue lors du téléchargement du code: {e}")
         raise HTTPException(status_code=500, detail=f"Erreur inattendue: {e}")
 
-@app.post("/api/chat", response_model=ChatResponse, tags=["AI"])
+async def stream_chat_response(chat_session, augmented_prompt, messages_ref, user_prompt):
+    """
+    An async generator that streams the chat response and saves the full conversation.
+    """
+    try:
+        response_stream = chat_session.send_message(augmented_prompt, stream=True)
+        full_reply = ""
+        for chunk in response_stream:
+            # Some chunks might be empty, filter them out
+            if chunk.text:
+                full_reply += chunk.text
+                yield chunk.text
+    except Exception as e:
+        logger.error(f"Error during streaming response generation: {e}")
+        # Yield a final error message to the client
+        yield f"ERREUR: {str(e)}"
+    finally:
+        # This block executes whether the stream completed successfully or with an error
+        logger.info(f"Streaming finished. Full reply length: {len(full_reply)}")
+        if full_reply: # Save conversation only if a response was generated
+            try:
+                messages_ref.add({'role': 'user', 'parts': [user_prompt], 'timestamp': firestore.SERVER_TIMESTAMP})
+                messages_ref.add({'role': 'model', 'parts': [full_reply], 'timestamp': firestore.SERVER_TIMESTAMP})
+                logger.info("Chat history successfully saved to Firestore.")
+            except Exception as e:
+                logger.error(f"Failed to save chat history to Firestore: {e}")
+
+@app.post("/api/chat", tags=["AI"])
 @limiter.limit("60/minute")
 async def handle_chat(request: Request, req_body: ChatRequest, token: dict = Depends(verify_token)):
     if not db:
@@ -313,27 +340,17 @@ async def handle_chat(request: Request, req_body: ChatRequest, token: dict = Dep
 
         context = ""
         if vector_search_endpoint:
-            keywords = extract_keywords(req_body.prompt, model)
-            expanded_query = req_body.prompt + " " + " ".join(keywords)
-            logger.info(f"Expanded query for embedding: {expanded_query}")
-
-            embedding_result = genai.embed_content(model="models/text-embedding-004", content=[expanded_query], task_type="RETRIEVAL_QUERY")
+            embedding_result = genai.embed_content(model="models/text-embedding-004", content=[req_body.prompt], task_type="RETRIEVAL_QUERY")
             prompt_embedding = embedding_result['embedding'][0]
 
-            search_results = vector_search_endpoint.find_neighbors(queries=[prompt_embedding], deployed_index_id=VECTOR_SEARCH_INDEX_ID.split('/')[-1], num_neighbors=10)
+            search_results = vector_search_endpoint.find_neighbors(queries=[prompt_embedding], deployed_index_id=VECTOR_SEARCH_INDEX_ID.split('/')[-1], num_neighbors=3)
 
             if search_results and search_results[0]:
                 neighbor_ids = [neighbor.datapoint.datapoint_id for neighbor in search_results[0]]
                 docs_ref = db.collection('document_chunks').where(firestore.FieldPath.document_id(), 'in', neighbor_ids).stream()
                 id_to_text_map = {doc.id: doc.to_dict().get('text', '') for doc in docs_ref}
-
-                # Initial retrieval in order from vector search
-                retrieved_documents = [id_to_text_map.get(nid, '') for nid in neighbor_ids if id_to_text_map.get(nid)]
-
-                # Re-rank the documents
-                reranked_docs = rerank_documents(req_body.prompt, retrieved_documents, model)
-
-                context = "\n---\n".join(reranked_docs)
+                context_documents = [id_to_text_map.get(nid, '') for nid in neighbor_ids]
+                context = "\n---\n".join(filter(None, context_documents))
 
         if context:
             augmented_prompt = f"""En te basant sur le contexte suivant, réponds à la question de l'utilisateur.
@@ -351,15 +368,14 @@ Question de l'utilisateur: {req_body.prompt}"""
         history = [doc.to_dict() for doc in history_docs]
 
         chat_session = model.start_chat(history=history)
-        response = chat_session.send_message(augmented_prompt)
-        ai_reply = response.text
 
-        messages_ref.add({'role': 'user', 'parts': [req_body.prompt], 'timestamp': firestore.SERVER_TIMESTAMP})
-        messages_ref.add({'role': 'model', 'parts': [ai_reply], 'timestamp': firestore.SERVER_TIMESTAMP})
-
-        return ChatResponse(reply=ai_reply, session_id=req_body.session_id)
+        return StreamingResponse(
+            stream_chat_response(chat_session, augmented_prompt, messages_ref, req_body.prompt),
+            media_type="text/plain"
+        )
     except google_exceptions.GoogleAPICallError as e:
         logger.error(f"Erreur de communication avec une API Google: {e}")
+        # Cannot return StreamingResponse here, so we raise an HTTP exception
         raise HTTPException(status_code=502, detail=f"Erreur de communication avec une API Google: {e}")
     except Exception as e:
         logger.error(f"Erreur interne lors du traitement du chat: {e}")
