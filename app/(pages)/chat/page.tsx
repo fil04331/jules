@@ -5,6 +5,7 @@ import { getApiUrl } from '../../services/api';
 
 // --- Types ---
 type Message = {
+  id: string; // Unique ID for each message
   role: 'user' | 'model';
   parts: string;
 };
@@ -18,6 +19,7 @@ export default function ChatPage() {
   const [userId, setUserId] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [error, setError] = useState('');
+  const [parentMessageId, setParentMessageId] = useState<string | null>(null);
 
   // NOUVEAU: États pour la gestion de l'upload
   const [isUploading, setIsUploading] = useState(false);
@@ -44,22 +46,40 @@ export default function ChatPage() {
     e.preventDefault();
     if (!input.trim() || isLoading || isUploading) return;
 
-    const userMessage: Message = { role: 'user', parts: input };
-    setMessages(prev => [...prev, userMessage]);
+    let currentMessages = messages;
+    // If we are branching, slice the conversation history
+    if (parentMessageId) {
+      const parentIndex = messages.findIndex(msg => msg.id === parentMessageId);
+      if (parentIndex > -1) {
+        currentMessages = messages.slice(0, parentIndex + 1);
+      }
+    }
+
+    const userMessage: Message = { role: 'user', parts: input, id: `temp-user-${Date.now()}` };
+    setMessages([...currentMessages, userMessage]);
     const currentInput = input;
     setInput('');
     setIsLoading(true);
     setError('');
 
     // Add a placeholder for the model's message
-    setMessages(prev => [...prev, { role: 'model', parts: '' }]);
+    setMessages(prev => [...prev, { role: 'model', parts: '', id: `temp-model-${Date.now()}` }]);
 
     try {
       const response = await fetch(getApiUrl('/api/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: currentInput, session_id: sessionId }),
+        body: JSON.stringify({
+          prompt: currentInput,
+          session_id: sessionId,
+          parent_message_id: parentMessageId
+        }),
       });
+
+      // Reset parent message ID after sending
+      if (parentMessageId) {
+        setParentMessageId(null);
+      }
 
       if (!response.ok) {
         throw new Error(`API Error: ${response.statusText}`);
@@ -71,11 +91,26 @@ export default function ChatPage() {
       }
 
       const decoder = new TextDecoder();
+      let isFirstChunk = true;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
+        let chunk = decoder.decode(value, { stream: true });
+
+        if (isFirstChunk && chunk.startsWith('__IDS__::')) {
+          const [_, userMsgId, modelMsgId] = chunk.split('::');
+          setMessages(prev => {
+            const updatedMessages = [...prev];
+            updatedMessages[updatedMessages.length - 2].id = userMsgId.trim();
+            updatedMessages[updatedMessages.length - 1].id = modelMsgId.trim();
+            return updatedMessages;
+          });
+          isFirstChunk = false;
+          // Continue to the next iteration to avoid processing the ID line as text
+          continue;
+        }
+
         setMessages(prev => {
             const lastMessage = prev[prev.length - 1];
             const updatedLastMessage = { ...lastMessage, parts: lastMessage.parts + chunk };
@@ -90,6 +125,21 @@ export default function ChatPage() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleBranchClick = (messageId: string, messageText: string) => {
+    setParentMessageId(messageId);
+    setInput(messageText); // Pre-fill input for editing
+    // Focus the input field
+    const inputElement = document.querySelector('input[type="text"]');
+    if (inputElement) {
+      (inputElement as HTMLInputElement).focus();
+    }
+  };
+
+  const cancelBranching = () => {
+    setParentMessageId(null);
+    setInput('');
   };
 
   // NOUVEAU: Gère la sélection et l'upload du fichier
@@ -147,10 +197,30 @@ export default function ChatPage() {
       <main className="flex-1 overflow-y-auto p-4 md:p-6">
         <div className="max-w-3xl mx-auto">
           {messages.map((msg, index) => (
-            <div key={index} className={`flex my-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`rounded-2xl px-4 py-2 max-w-lg lg:max-w-xl break-words ${ msg.role === 'user' ? 'bg-blue-600 rounded-br-none' : 'bg-gray-700 rounded-bl-none' }`}>
+            <div key={msg.id} className={`group flex items-center my-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {/* Branch button for model messages */}
+              {msg.role === 'model' && msg.id && !msg.id.startsWith('temp-') && (
+                <button
+                  onClick={() => handleBranchClick(msg.id, msg.parts)}
+                  className="mr-2 p-1 text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                  aria-label="Branch from this message"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-4m0 0l-4-4m4 4H4" /></svg>
+                </button>
+              )}
+              <div className={`relative rounded-2xl px-4 py-2 max-w-lg lg:max-w-xl break-words ${ msg.role === 'user' ? 'bg-blue-600 rounded-br-none' : 'bg-gray-700 rounded-bl-none' } ${parentMessageId === msg.id ? 'ring-2 ring-green-500' : ''}`}>
                 <p className="whitespace-pre-wrap">{msg.parts}</p>
               </div>
+              {/* Branch button for user messages */}
+              {msg.role === 'user' && msg.id && !msg.id.startsWith('temp-') && (
+                <button
+                  onClick={() => handleBranchClick(msg.id, msg.parts)}
+                  className="ml-2 p-1 text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                  aria-label="Branch from this message"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-4m0 0l-4-4m4 4H4" /></svg>
+                </button>
+              )}
             </div>
           ))}
           {isLoading && (
@@ -166,6 +236,14 @@ export default function ChatPage() {
         <div className="max-w-3xl mx-auto">
           {/* NOUVEAU: Afficheur de statut d'upload */}
           {uploadStatus && <p className="text-center text-sm text-gray-400 mb-2 transition-opacity duration-300">{uploadStatus}</p>}
+
+          {/* Branching Indicator */}
+          {parentMessageId && (
+            <div className="flex items-center justify-center text-sm text-green-400 mb-2">
+              <span>Branching from a previous message.</span>
+              <button onClick={cancelBranching} className="ml-2 text-xs text-red-400 hover:text-red-300">[ Cancel ]</button>
+            </div>
+          )}
 
           <div className="flex items-center space-x-2">
             {/* NOUVEAU: Bouton d'upload */}
