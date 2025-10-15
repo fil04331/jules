@@ -10,3 +10,6 @@ python-multipart
 google-cloud-secret-manager
 python-jose-cryptodome
 redis
+slowapi
+pytest
+httpx
