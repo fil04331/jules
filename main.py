@@ -10,13 +10,17 @@ import tempfile
 import subprocess
 from dotenv import load_dotenv
 import google.generativeai as genai
-from fastapi import FastAPI, HTTPException, UploadFile, File, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Response, Depends
 from pydantic import BaseModel, Field, HttpUrl
 import firebase_admin
 from firebase_admin import credentials, firestore
 from pypdf import PdfReader
 from google.cloud import aiplatform
 from google.cloud import secretmanager
+from auth import verify_token
+import redis
+import hashlib
+from google.api_core import exceptions as google_exceptions
 
 # --- Helper Functions ---
 def access_secret_version(secret_version_id):
@@ -43,6 +47,9 @@ try:
     GCP_REGION = os.environ.get("GCP_REGION")
     VECTOR_SEARCH_INDEX_ID = os.environ.get("VECTOR_SEARCH_INDEX_ID")
     VECTOR_SEARCH_ENDPOINT_ID = os.environ.get("VECTOR_SEARCH_ENDPOINT_ID")
+    REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+    REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+
 
     # Récupérer le nom de la ressource du secret depuis les variables d'environnement
     google_api_key_secret = os.environ.get("GOOGLE_API_KEY_SECRET")
@@ -89,10 +96,20 @@ try:
 except Exception as e:
     print(f"ERREUR: Impossible d'initialiser Vertex AI ou Vector Search. Détails: {e}")
 
+# 4. Initialisation de Redis
+redis_client = None
+try:
+    redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+    redis_client.ping()
+    print("Connexion à Redis réussie.")
+except redis.exceptions.ConnectionError as e:
+    print(f"ERREUR: Impossible de se connecter à Redis. Le caching sera désactivé. Détails: {e}")
+    redis_client = None
+
+
 # --- Modèles de Données (Pydantic) ---
 class ChatRequest(BaseModel):
     prompt: str = Field(..., title="Prompt", max_length=5000)
-    user_id: str = Field(..., title="User ID")
     session_id: str = Field(..., title="Session ID")
 
 class ChatResponse(BaseModel):
@@ -124,7 +141,7 @@ async def read_root():
     return {"status": "ok", "message": "Backend de Jules.google v0.5.0 avec RAG (Vertex AI)."}
 
 @app.post("/api/upload", tags=["Knowledge"])
-async def upload_knowledge(file: UploadFile = File(...)):
+async def upload_knowledge(file: UploadFile = File(...), token: dict = Depends(verify_token)):
     """
     Traite un fichier, le stocke dans Firestore, génère des embeddings, et upsert dans Vertex AI.
     """
@@ -175,6 +192,10 @@ async def upload_knowledge(file: UploadFile = File(...)):
 
         return {"filename": file.filename, "status": "processed", "chunks_added": len(chunks)}
 
+    except google_exceptions.GoogleAPICallError as e:
+        raise HTTPException(status_code=502, detail=f"Erreur de communication avec une API Google (Firestore/VertexAI): {e}")
+    except IOError as e:
+        raise HTTPException(status_code=500, detail=f"Erreur d'entrée/sortie avec le fichier uploadé: {e}")
     except Exception as e:
         print(f"Erreur lors du traitement de l'upload: {e}")
         raise HTTPException(status_code=500, detail=f"Erreur lors du traitement du fichier: {str(e)}")
@@ -183,13 +204,26 @@ async def upload_knowledge(file: UploadFile = File(...)):
             os.remove(file_path)
 
 @app.post("/api/generate-code", response_model=CodeGenerationResponse, tags=["Code Generation"])
-async def generate_code(request: CodeGenerationRequest):
+async def generate_code(request: CodeGenerationRequest, token: dict = Depends(verify_token)):
     """
     Génère du code et le stocke dans Firestore pour un téléchargement ultérieur.
+    Utilise Redis pour mettre en cache les requêtes identiques.
     """
     if not db:
         raise HTTPException(status_code=503, detail="La connexion à Firestore n'est pas disponible.")
 
+    try:
+        if redis_client:
+            cache_key = f"code_gen:{hashlib.sha256(request.prompt.encode()).hexdigest()}"
+            cached_result = redis_client.get(cache_key)
+            if cached_result:
+                print("Cache HIT")
+                cached_data = json.loads(cached_result)
+                return CodeGenerationResponse(**cached_data)
+    except redis.exceptions.RedisError as e:
+        print(f"Erreur Redis (GET): {e}. On continue sans cache.")
+
+    print("Cache MISS")
     code_generation_prompt = f"""
     Ta tâche est de générer uniquement le code source pour la demande suivante.
     Ne fournis AUCUNE explication, commentaire en langage naturel, ou formatage de type Markdown avant ou après le bloc de code.
@@ -208,33 +242,52 @@ async def generate_code(request: CodeGenerationRequest):
         doc_ref = db.collection('generated_codes').document(code_id)
         doc_ref.set({'code': generated_code, 'filename': request.filename, 'createdAt': firestore.SERVER_TIMESTAMP})
 
-        return CodeGenerationResponse(code_id=code_id, filename=request.filename)
+        response_data = {"code_id": code_id, "filename": request.filename}
+
+        try:
+            if redis_client:
+                redis_client.set(cache_key, json.dumps(response_data), ex=3600)  # Cache pour 1 heure
+        except redis.exceptions.RedisError as e:
+            print(f"Erreur Redis (SET): {e}. La réponse est envoyée mais non cachée.")
+
+        return CodeGenerationResponse(**response_data)
+    except google_exceptions.GoogleAPICallError as e:
+        raise HTTPException(status_code=502, detail=f"Erreur lors de la communication avec l'API Gemini: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du code: {e}")
 
 @app.get("/api/download-code/{code_id}", tags=["Code Generation"])
-async def download_code(code_id: str, filename: str):
+async def download_code(code_id: str, filename: str, token: dict = Depends(verify_token)):
     """
     Télécharge le code généré depuis Firestore et supprime le document.
     """
     if not db:
         raise HTTPException(status_code=503, detail="La connexion à Firestore n'est pas disponible.")
 
-    doc_ref = db.collection('generated_codes').document(code_id)
-    doc = doc_ref.get()
+    try:
+        doc_ref = db.collection('generated_codes').document(code_id)
+        doc = doc_ref.get()
 
-    if not doc.exists:
-        raise HTTPException(status_code=404, detail="Code non trouvé, expiré, ou déjà téléchargé.")
+        if not doc.exists:
+            raise HTTPException(status_code=404, detail="Code non trouvé, expiré, ou déjà téléchargé.")
 
-    code_data = doc.to_dict()
-    generated_code = code_data.get('code', '')
+        code_data = doc.to_dict()
+        generated_code = code_data.get('code', '')
 
-    response = Response(content=generated_code, media_type="application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-    doc_ref.delete()
-    return response
+        response = Response(content=generated_code, media_type="application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+        doc_ref.delete()
+
+        return response
+    except google_exceptions.NotFound:
+         raise HTTPException(status_code=404, detail="Le document de code n'a pas été trouvé dans Firestore.")
+    except google_exceptions.GoogleAPICallError as e:
+        raise HTTPException(status_code=502, detail=f"Erreur de communication avec Firestore: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur inattendue: {e}")
 
 @app.post("/api/chat", response_model=ChatResponse, tags=["AI"])
-async def handle_chat(request: ChatRequest):
+async def handle_chat(request: ChatRequest, token: dict = Depends(verify_token)):
     """
     Gère une conversation avec RAG, en utilisant Vertex AI Vector Search et Firestore.
     """
@@ -242,6 +295,10 @@ async def handle_chat(request: ChatRequest):
         raise HTTPException(status_code=503, detail="La connexion à Firestore n'est pas disponible.")
 
     try:
+        user_id = token.get('uid')
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in token.")
+
         context = ""
         if vector_search_endpoint:
             embedding_result = genai.embed_content(model="models/text-embedding-004", content=[request.prompt], task_type="RETRIEVAL_QUERY")
@@ -267,7 +324,7 @@ Question de l'utilisateur: {request.prompt}"""
         else:
             augmented_prompt = request.prompt
 
-        messages_ref = db.collection('users').document(request.user_id).collection('sessions').document(request.session_id).collection('messages')
+        messages_ref = db.collection('users').document(user_id).collection('sessions').document(request.session_id).collection('messages')
         history_docs = messages_ref.order_by("timestamp").stream()
         history = [doc.to_dict() for doc in history_docs]
 
@@ -279,6 +336,8 @@ Question de l'utilisateur: {request.prompt}"""
         messages_ref.add({'role': 'model', 'parts': [ai_reply], 'timestamp': firestore.SERVER_TIMESTAMP})
 
         return ChatResponse(reply=ai_reply, session_id=request.session_id)
+    except google_exceptions.GoogleAPICallError as e:
+        raise HTTPException(status_code=502, detail=f"Erreur de communication avec une API Google: {e}")
     except Exception as e:
         print(f"Erreur lors du chat: {e}")
         raise HTTPException(status_code=500, detail=f"Erreur interne lors du traitement du chat: {str(e)}")
