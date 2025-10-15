@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { fetchApi } from '../../services/api'; // MODIFIÉ: Import de fetchApi
+import { getApiUrl } from '../../services/api';
 
 // --- Types ---
 type Message = {
@@ -51,14 +51,37 @@ export default function ChatPage() {
     setIsLoading(true);
     setError('');
 
+    // Add a placeholder for the model's message
+    setMessages(prev => [...prev, { role: 'model', parts: '' }]);
+
     try {
-      const data = await fetchApi('/api/chat', {
+      const response = await fetch(getApiUrl('/api/chat'), {
         method: 'POST',
-        body: JSON.stringify({ prompt: currentInput, user_id: userId, session_id: sessionId }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: currentInput, session_id: sessionId }),
       });
 
-      const modelMessage: Message = { role: 'model', parts: data.reply };
-      setMessages(prev => [...prev, modelMessage]);
+      if (!response.ok) {
+        throw new Error(`API Error: ${response.statusText}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Failed to get response reader');
+      }
+
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        setMessages(prev => {
+            const lastMessage = prev[prev.length - 1];
+            const updatedLastMessage = { ...lastMessage, parts: lastMessage.parts + chunk };
+            return [...prev.slice(0, -1), updatedLastMessage];
+        });
+      }
 
     } catch (err: any) {
       setError(err.message);
