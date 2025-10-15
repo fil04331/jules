@@ -68,3 +68,53 @@ Ceci est une fonctionnalité clé qui se déroule en plusieurs étapes :
 * **Coûts :** L'utilisation des API (Gemini, Pinecone) et des services de déploiement (Cloud Run, Vercel) a un coût. La plupart offrent un niveau gratuit généreux pour commencer, mais il faudra surveiller votre consommation à mesure que l'utilisation augmente.
 
 Ce projet est parfaitement réalisable avec les technologies actuelles. Il combine le meilleur des LLM, des architectures web modernes et des outils de développement pour créer un assistant véritablement personnel et puissant.
+
+---
+
+## **5. Développement Local avec Docker Compose**
+
+Pour faciliter le développement et garantir un environnement cohérent, ce projet utilise Docker Compose pour orchestrer le backend FastAPI et un serveur Redis.
+
+### **Prérequis**
+
+*   **Docker:** [Installez Docker Desktop](https://www.docker.com/products/docker-desktop/) pour votre système d'exploitation.
+*   **Docker Compose:** Généralement inclus avec Docker Desktop.
+
+### **Configuration de l'Environnement**
+
+1.  **Créer le fichier `.env` :**
+    Copiez le fichier d'exemple `.env.example` et renommez la copie en `.env`.
+
+    ```bash
+    cp .env.example .env
+    ```
+
+2.  **Configurer les variables d'environnement :**
+    Ouvrez le fichier `.env` et remplissez les variables requises. La plus importante est `GOOGLE_API_KEY_SECRET`, qui doit contenir le nom de ressource complet de votre clé API stockée dans Google Secret Manager.
+
+    *   `GOOGLE_API_KEY_SECRET="projects/your-gcp-project-id/secrets/your-secret-name/versions/latest"`
+    *   `GCP_PROJECT_ID="your-gcp-project-id"`
+    *   Les variables `REDIS_HOST` et `REDIS_PORT` sont gérées automatiquement par Docker Compose. Vous n'avez pas besoin de les modifier pour le développement local.
+
+### **Lancement de l'Environnement**
+
+1.  **Construire et démarrer les conteneurs :**
+    Depuis la racine du projet, exécutez la commande suivante. L'option `--build` re-construit l'image de l'application si des changements ont eu lieu (par exemple, si vous avez ajouté des dépendances dans `requirements.txt`).
+
+    ```bash
+    docker-compose up --build
+    ```
+
+2.  **Vérifier le statut :**
+    Vous devriez voir les logs du serveur FastAPI et de Redis dans votre terminal. L'application backend sera accessible une fois que le message "Application startup complete" (ou similaire) apparaîtra.
+
+3.  **Accéder à l'API :**
+    Le backend est maintenant en cours d'exécution et écoute sur le port `8080` de votre machine locale. Vous pouvez accéder à la documentation de l'API (Swagger UI) à l'adresse : [http://localhost:8080/docs](http://localhost:8080/docs).
+
+### **Arrêter l'Environnement**
+
+Pour arrêter les conteneurs, appuyez sur `Ctrl + C` dans le terminal où `docker-compose` est en cours d'exécution. Pour nettoyer et supprimer les conteneurs, vous pouvez exécuter :
+
+```bash
+docker-compose down
+```

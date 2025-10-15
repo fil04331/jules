@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: jules.dockerfile
+    container_name: jules-app
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+    volumes:
+      - .:/app
+
+  redis:
+    image: "redis:alpine"
+    container_name: jules-redis
+    ports:
+      - "6379:6379"
