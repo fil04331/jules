@@ -23,7 +23,8 @@ venv/
 !.env.example
 
 # Database & Temporary Files
-chroma_db/
+/chroma_db/
+chroma.sqlite3
 temp_uploads/
 jules.google.app.zip
 
