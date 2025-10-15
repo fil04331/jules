@@ -12,7 +12,7 @@ def test_read_root():
     """
     response = client.get("/")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "message": "Backend de Jules.google v0.6.0 avec RAG (Vertex AI)."}
+    assert response.json() == {"status": "ok", "message": "Backend de Jules.google v0.7.0 avec RAG (ChromaDB)."}
 
 def test_rate_limiting():
     """

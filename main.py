@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field, HttpUrl
 import firebase_admin
 from firebase_admin import credentials, firestore
 from pypdf import PdfReader
-from google.cloud import aiplatform
 from google.cloud import secretmanager
+import chroma_service
 from auth import verify_token, verify_admin
 import redis
 import hashlib
@@ -55,8 +55,6 @@ load_dotenv()
 try:
     GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
     GCP_REGION = os.environ.get("GCP_REGION")
-    VECTOR_SEARCH_INDEX_ID = os.environ.get("VECTOR_SEARCH_INDEX_ID")
-    VECTOR_SEARCH_ENDPOINT_ID = os.environ.get("VECTOR_SEARCH_ENDPOINT_ID")
     REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
     REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
 
@@ -71,8 +69,8 @@ try:
     if not GOOGLE_API_KEY:
         raise ValueError("Impossible de récupérer la clé API depuis Secret Manager.")
 
-    if not all([GCP_PROJECT_ID, GCP_REGION, VECTOR_SEARCH_INDEX_ID, VECTOR_SEARCH_ENDPOINT_ID]):
-        logger.warning("One or more Google Cloud environment variables are missing. RAG features may not work.")
+    if not all([GCP_PROJECT_ID, GCP_REGION]):
+        logger.warning("One or more Google Cloud environment variables are missing.")
 
     genai.configure(api_key=GOOGLE_API_KEY)
 except (KeyError, ValueError) as e:
@@ -93,18 +91,11 @@ try:
 except Exception as e:
     logger.critical(f"ERREUR: Impossible de se connecter à Firestore. Détails: {e}")
 
-# 3. Initialisation de Vertex AI et Vector Search
-vector_search_endpoint = None
-try:
-    if all([GCP_PROJECT_ID, GCP_REGION, VECTOR_SEARCH_ENDPOINT_ID]):
-        aiplatform.init(project=GCP_PROJECT_ID, location=GCP_REGION)
-        logger.info("Vertex AI SDK initialisé.")
-        vector_search_endpoint = aiplatform.MatchingEngineIndexEndpoint(
-            index_endpoint_name=VECTOR_SEARCH_ENDPOINT_ID
-        )
-        logger.info(f"Endpoint Vector Search '{VECTOR_SEARCH_ENDPOINT_ID}' chargé.")
-except Exception as e:
-    logger.error(f"ERREUR: Impossible d'initialiser Vertex AI ou Vector Search. Détails: {e}")
+# 3. Initialisation de ChromaDB
+if not chroma_service.is_ready():
+    logger.critical("ERREUR: Le service ChromaDB n'a pas pu être initialisé. Les fonctionnalités RAG seront désactivées.")
+else:
+    logger.info("Le service ChromaDB est initialisé et prêt.")
 
 # 4. Initialisation de Redis
 redis_client = None
@@ -141,8 +132,8 @@ class CodeGenerationResponse(BaseModel):
 # --- Initialisation de FastAPI ---
 app = FastAPI(
     title="Jules.google Backend API",
-    description="Le cerveau de l'agent IA personnel 'Jules', avec RAG sur Vertex AI.",
-    version="0.6.0",
+    description="Le cerveau de l'agent IA personnel 'Jules', avec RAG sur ChromaDB.",
+    version="0.7.0",
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -155,13 +146,13 @@ model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 @app.get("/", tags=["Status"])
 async def read_root():
-    return {"status": "ok", "message": "Backend de Jules.google v0.6.0 avec RAG (Vertex AI)."}
+    return {"status": "ok", "message": "Backend de Jules.google v0.7.0 avec RAG (ChromaDB)."}
 
 @app.post("/api/upload", tags=["Knowledge"])
 @limiter.limit("20/minute")
 async def upload_knowledge(request: Request, file: UploadFile = File(...), token: dict = Depends(verify_token)):
-    if not all([vector_search_endpoint, db]):
-        raise HTTPException(status_code=503, detail="Un service backend (Vector Search ou Firestore) n'est pas disponible.")
+    if not chroma_service.is_ready() or not db:
+        raise HTTPException(status_code=503, detail="Un service backend (ChromaDB ou Firestore) n'est pas disponible.")
 
     temp_dir = "temp_uploads"
     os.makedirs(temp_dir, exist_ok=True)
@@ -192,23 +183,25 @@ async def upload_knowledge(request: Request, file: UploadFile = File(...), token
         embedding_result = genai.embed_content(model="models/text-embedding-004", content=chunks, task_type="RETRIEVAL_DOCUMENT")
         embeddings = embedding_result['embedding']
 
-        datapoints = []
-        firestore_batch = db.batch()
-        chunks_collection_ref = db.collection('document_chunks')
+        # Préparer les données pour ChromaDB
+        ids = [f"{os.path.splitext(file.filename)[0]}-{uuid.uuid4()}" for _ in chunks]
+        metadatas = [{"source_file": file.filename} for _ in chunks]
 
-        for i, (embedding_vector, chunk_text) in enumerate(zip(embeddings, chunks)):
-            datapoint_id = f"{os.path.splitext(file.filename)[0]}-{uuid.uuid4()}"
-            datapoints.append({"datapoint_id": datapoint_id, "feature_vector": embedding_vector})
-            doc_ref = chunks_collection_ref.document(datapoint_id)
-            firestore_batch.set(doc_ref, {"text": chunk_text, "source_file": file.filename, "created_at": firestore.SERVER_TIMESTAMP})
-
-        vector_search_endpoint.upsert_datapoints(index=VECTOR_SEARCH_INDEX_ID, datapoints=datapoints)
-        firestore_batch.commit()
+        # Insérer les documents dans ChromaDB
+        chroma_service.upsert_documents(
+            datapoint_ids=ids,
+            documents=chunks,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
 
         return {"filename": file.filename, "status": "processed", "chunks_added": len(chunks)}
     except google_exceptions.GoogleAPICallError as e:
-        logger.error(f"Erreur de communication avec une API Google (Firestore/VertexAI): {e}")
-        raise HTTPException(status_code=502, detail=f"Erreur de communication avec une API Google (Firestore/VertexAI): {e}")
+        logger.error(f"Erreur de communication avec l'API Google (Gemini Embeddings): {e}")
+        raise HTTPException(status_code=502, detail=f"Erreur de communication avec l'API Google (Gemini Embeddings): {e}")
+    except ConnectionError as e:
+        logger.error(f"Erreur de communication avec ChromaDB: {e}")
+        raise HTTPException(status_code=503, detail=f"Erreur de communication avec ChromaDB: {e}")
     except IOError as e:
         logger.error(f"Erreur d'entrée/sortie avec le fichier uploadé: {e}")
         raise HTTPException(status_code=500, detail=f"Erreur d'entrée/sortie avec le fichier uploadé: {e}")
@@ -387,19 +380,22 @@ async def handle_chat(request: Request, req_body: ChatRequest, token: dict = Dep
         if not user_id:
             raise HTTPException(status_code=400, detail="User ID not found in token.")
 
-        # --- RAG & Context Augmentation (No changes here) ---
+        # --- RAG & Context Augmentation ---
         context = ""
-        # ... (RAG logic is unchanged)
-        if vector_search_endpoint:
-            embedding_result = genai.embed_content(model="models/text-embedding-004", content=[req_body.prompt], task_type="RETRIEVAL_QUERY")
-            prompt_embedding = embedding_result['embedding'][0]
-            search_results = vector_search_endpoint.find_neighbors(queries=[prompt_embedding], deployed_index_id=VECTOR_SEARCH_INDEX_ID.split('/')[-1], num_neighbors=3)
-            if search_results and search_results[0]:
-                neighbor_ids = [neighbor.datapoint.datapoint_id for neighbor in search_results[0]]
-                docs_ref = db.collection('document_chunks').where(firestore.FieldPath.document_id(), 'in', neighbor_ids).stream()
-                id_to_text_map = {doc.id: doc.to_dict().get('text', '') for doc in docs_ref}
-                context_documents = [id_to_text_map.get(nid, '') for nid in neighbor_ids]
-                context = "\n---\n".join(filter(None, context_documents))
+        if chroma_service.is_ready():
+            try:
+                embedding_result = genai.embed_content(model="models/text-embedding-004", content=[req_body.prompt], task_type="RETRIEVAL_QUERY")
+                prompt_embedding = embedding_result['embedding'][0]
+
+                search_results = chroma_service.query_collection(query_embedding=prompt_embedding, num_results=3)
+
+                # Les documents sont directement dans la réponse de ChromaDB
+                documents = search_results.get('documents', [[]])[0]
+                if documents:
+                    context = "\n---\n".join(documents)
+            except Exception as e:
+                logger.error(f"Erreur pendant la recherche RAG avec ChromaDB: {e}")
+                # On continue sans contexte en cas d'erreur
 
         if context:
             augmented_prompt = f"""En te basant sur le contexte suivant, réponds à la question de l'utilisateur.
