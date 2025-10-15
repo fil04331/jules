@@ -252,7 +252,7 @@ async def generate_code(request: Request, req_body: CodeGenerationRequest, token
 
         try:
             if redis_client:
-                redis_client.set(cache_key, json.dumps(response_data), ex=3600)  # Cache pour 1 heure
+                redis_client.set(cache_key, json.dumps(response_data), ex=86400)  # Cache pour 24 heures
         except redis.exceptions.RedisError as e:
             logger.warning(f"Erreur Redis (SET): {e}. La réponse est envoyée mais non cachée.")
 
